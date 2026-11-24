@@ -33,6 +33,9 @@ class AppConfig:
     tolerance: int = 8
     max_unchanged: int = 5
     save_folder: str = ""
+    border_visible: bool = True
+    border_color: str = "#38bdf8"
+    border_width: int = 3
 
     def resolved_save_folder(self) -> Path:
         return Path(self.save_folder) if self.save_folder else default_save_folder()
@@ -54,6 +57,9 @@ class AppConfig:
                 tolerance=int(raw.get("tolerance", 8)),
                 max_unchanged=int(raw.get("max_unchanged", 5)),
                 save_folder=str(raw.get("save_folder", "")),
+                border_visible=bool(raw.get("border_visible", True)),
+                border_color=str(raw.get("border_color", "#38bdf8")),
+                border_width=int(raw.get("border_width", 3)),
             )
         except (OSError, ValueError, TypeError):
             return cls()

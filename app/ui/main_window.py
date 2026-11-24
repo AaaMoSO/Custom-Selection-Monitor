@@ -7,9 +7,11 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QImage, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QColorDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import paths
+from ..border import RegionBorder
 from ..capture import CaptureRegion
 from ..config import APP_VERSION, AppConfig
 from ..controller import MonitorController
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         self._controller = controller
         self._config = config
         self._selector = RegionSelector(self)
+        self._border = RegionBorder(self)
         self._loading = True
 
         self._build()
@@ -151,6 +155,35 @@ class MainWindow(QMainWindow):
         row.addWidget(self._region_label, 1)
         row.addWidget(self._region_btn)
         body.addLayout(row)
+
+        border_row = QHBoxLayout()
+        border_row.setSpacing(8)
+        self._border_toggle = QCheckBox("显示区域边框")
+        self._border_toggle.setChecked(True)
+        self._border_toggle.setToolTip("在屏幕上始终标注被框选区域（置顶、鼠标穿透、不会被截进监控画面）")
+        border_row.addWidget(self._border_toggle)
+
+        color_label = QLabel("颜色")
+        color_label.setObjectName("caption")
+        border_row.addWidget(color_label)
+        self._border_color_btn = QPushButton()
+        self._border_color_btn.setObjectName("colorSwatch")
+        self._border_color_btn.setFixedSize(46, 22)
+        self._border_color_btn.setToolTip("选择边框颜色")
+        border_row.addWidget(self._border_color_btn)
+
+        width_label = QLabel("粗细")
+        width_label.setObjectName("caption")
+        border_row.addWidget(width_label)
+        self._border_width = QSpinBox()
+        self._border_width.setRange(1, 20)
+        self._border_width.setValue(3)
+        self._border_width.setSuffix(" px")
+        self._border_width.setFixedWidth(84)
+        self._border_width.setToolTip("边框线宽（逻辑像素）")
+        border_row.addWidget(self._border_width)
+        border_row.addStretch(1)
+        body.addLayout(border_row)
 
         file_row = QHBoxLayout()
         file_row.setSpacing(7)
@@ -313,21 +346,33 @@ class MainWindow(QMainWindow):
         self._browse_btn.clicked.connect(self._browse)
         self._open_btn.clicked.connect(self._open_output)
         self._cache_btn.clicked.connect(self._open_cache)
+        self._border_toggle.toggled.connect(self._on_border_changed)
+        self._border_width.valueChanged.connect(self._on_border_changed)
+        self._border_color_btn.clicked.connect(self._choose_border_color)
+
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.screenAdded.connect(lambda *_: self._border.refresh())
+            app.screenRemoved.connect(lambda *_: self._border.refresh())
 
     def _load_config(self) -> None:
         self._threshold.setValue(self._config.threshold_percent)
         self._max_unchanged.setValue(self._config.max_unchanged)
         self._tolerance.setValue(self._config.tolerance)
         self._folder_edit.setText(str(self._config.resolved_save_folder()))
+        self._border_toggle.setChecked(bool(self._config.border_visible))
+        self._border_width.setValue(int(self._config.border_width))
+        self._update_color_swatch()
+        self._apply_border_style()
 
     def _place_window(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
-            self.resize(620, 660)
+            self.resize(620, 700)
             return
         available = screen.availableGeometry()
         width = min(660, max(560, available.width() - 120))
-        height = min(720, max(480, available.height() - 88))
+        height = min(768, max(480, available.height() - 48))
         self.resize(width, height)
         self.move(
             available.left() + (available.width() - width) // 2,
@@ -367,6 +412,8 @@ class MainWindow(QMainWindow):
             return
         self._region_label.setText(region.describe())
         self._append_log(f"已选择区域 {region.describe()}")
+        self._apply_border_style()
+        self._border.set_region(region, self._selector.last_band)
         self.raise_()
         self.activateWindow()
         self._sync_buttons(self._controller.state, region)
@@ -393,6 +440,43 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    # ------------------------------------------------------------------ 边框
+    def _on_border_changed(self, *args) -> None:
+        if self._loading:
+            return
+        self._config.border_visible = self._border_toggle.isChecked()
+        self._config.border_width = self._border_width.value()
+        self._apply_border_style()
+        self._persist()
+
+    def _choose_border_color(self) -> None:
+        color = QColorDialog.getColor(
+            QColor(self._config.border_color), self, "选择边框颜色"
+        )
+        if not color.isValid():
+            return
+        self._config.border_color = color.name()
+        self._update_color_swatch()
+        self._apply_border_style()
+        self._persist()
+
+    def _update_color_swatch(self) -> None:
+        color = QColor(self._config.border_color)
+        if not color.isValid():
+            color = QColor("#38bdf8")
+        self._border_color_btn.setStyleSheet(
+            f"QPushButton#colorSwatch {{ background: {color.name()};"
+            f" border: 1px solid #2a3a4d; border-radius: 6px; }}"
+            f"QPushButton#colorSwatch:hover {{ border-color: #4b637a; }}"
+        )
+
+    def _apply_border_style(self) -> None:
+        self._border.set_style(
+            self._config.border_color,
+            self._config.border_width,
+            self._config.border_visible,
+        )
+
     def _persist(self) -> None:
         if self._loading:
             return
@@ -401,6 +485,8 @@ class MainWindow(QMainWindow):
         self._config.tolerance = self._tolerance.value()
         self._config.max_unchanged = self._max_unchanged.value()
         self._config.save_folder = folder
+        self._config.border_visible = self._border_toggle.isChecked()
+        self._config.border_width = self._border_width.value()
         self._controller.apply_settings(
             threshold_percent=self._config.threshold_percent,
             tolerance=self._config.tolerance,
@@ -505,5 +591,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: ANN001, N802
         if self._selector.active:
             self._selector.cancel()
+        self._border.close()
         self._controller.shutdown()
         super().closeEvent(event)

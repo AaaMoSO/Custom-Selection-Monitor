@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-APP_QSS = """
+from pathlib import Path
+
+_QSS_TEMPLATE = """
 QWidget {
     color: #dbe6f1;
     font-size: 13px;
@@ -159,6 +161,27 @@ QLabel#lastSaved {
     font-size: 11px;
 }
 
+QCheckBox {
+    color: #c3d2e2;
+    spacing: 8px;
+    font-size: 12px;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid #2f4155;
+    background: #0c1219;
+}
+QCheckBox::indicator:hover {
+    border-color: #3f5771;
+}
+QCheckBox::indicator:checked {
+    background: #0ea5e9;
+    border-color: #0ea5e9;
+    image: url("__CHECK_ICON__");
+}
+
 QPlainTextEdit#log {
     background: #090e14;
     border: 1px solid #1a2330;
@@ -198,3 +221,6 @@ QToolTip {
     padding: 4px 8px;
 }
 """
+
+_CHECK_ICON = (Path(__file__).resolve().parent / "assets" / "check.png").as_posix()
+APP_QSS = _QSS_TEMPLATE.replace("__CHECK_ICON__", _CHECK_ICON)

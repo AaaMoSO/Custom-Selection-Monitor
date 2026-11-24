@@ -49,7 +49,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         scroll = window.findChild(QScrollArea)
         self.assertIsNotNone(scroll)
         # 内容高度应能放进默认窗口（不依赖滚动条）
-        self.assertLessEqual(scroll.widget().sizeHint().height(), 730)
+        self.assertLessEqual(scroll.widget().sizeHint().height(), 760)
 
         # 取消框选后按钮必须恢复可用，不能卡死
         window._region_btn.setEnabled(False)
@@ -80,6 +80,17 @@ class MainWindowSmokeTests(unittest.TestCase):
         window._apply_chip(MonitorState.PAUSED)
         self.app.processEvents()
         self.assertEqual(window._chip.property("state"), "paused")
+
+        # 边框开关要即时生效，但不该真的写配置文件
+        from unittest import mock
+
+        with mock.patch.object(MainWindow, "_persist"):
+            window._border_toggle.setChecked(False)
+            self.assertFalse(window._border.visible)
+            window._border_toggle.setChecked(True)
+            self.assertTrue(window._border.visible)
+            window._border_width.setValue(7)
+            self.assertEqual(window._border.border_width, 7)
 
         preview = np.zeros((120, 200, 3), dtype=np.uint8)
         preview[:, :, 0] = 200

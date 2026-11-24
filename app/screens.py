@@ -222,6 +222,35 @@ class CoordinateMapper:
         x2, y2 = self.map_point(left + width, top + height)
         return (abs(x2 - x1), abs(y2 - y1))
 
+    def to_logical_point(self, x: float, y: float) -> tuple[int, int]:
+        """物理像素 → Qt 逻辑坐标（用于把已选区域画回屏幕上）。"""
+        for screen in self._screens:
+            monitor = self._monitor_of.get(id(screen))
+            if monitor is None:
+                continue
+            if (
+                monitor.left <= x < monitor.left + monitor.width
+                and monitor.top <= y < monitor.top + monitor.height
+            ):
+                geo = screen.geometry()
+                dpr = float(screen.devicePixelRatio() or 1.0)
+                lx = geo.left() + (x - monitor.left) / dpr
+                ly = geo.top() + (y - monitor.top) / dpr
+                return (int(round(lx)), int(round(ly)))
+        return (int(round(x)), int(round(y)))
+
+    def to_logical_rect(self, region: CaptureRegion) -> tuple[int, int, int, int]:
+        """物理区域 → 逻辑矩形 (left, top, width, height)。
+
+        右下角按开区间处理：取最后一个物理像素 ``right-1 / bottom-1`` 换算，
+        避免恰好落在屏幕边界时被判到下一块显示器。
+        """
+        x1, y1 = self.to_logical_point(region.left, region.top)
+        x2, y2 = self.to_logical_point(region.right - 1, region.bottom - 1)
+        x1, x2 = sorted((x1, x2))
+        y1, y2 = sorted((y1, y2))
+        return (x1, y1, max(0, x2 - x1 + 1), max(0, y2 - y1 + 1))
+
     def to_capture_region(
         self, left: float, top: float, width: float, height: float
     ) -> CaptureRegion | None:

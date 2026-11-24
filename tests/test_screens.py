@@ -102,6 +102,23 @@ class MapperTests(unittest.TestCase):
     def test_degenerate_region_is_none(self):
         self.assertIsNone(self.mapper.to_capture_region(10, 10, 0, 50))
 
+    def test_logical_point_roundtrip(self):
+        self.assertEqual(self.mapper.to_logical_point(0, 0), (0, 0))
+        self.assertEqual(self.mapper.to_logical_point(1919, 1079), (1535, 863))
+        self.assertEqual(self.mapper.to_logical_point(1920, 0), (1920, 0))
+
+    def test_logical_rect_primary_full(self):
+        rect = self.mapper.to_logical_rect(CaptureRegion(0, 0, 1920, 1080))
+        self.assertEqual(rect, (0, 0, 1536, 864))
+
+    def test_logical_rect_secondary_full(self):
+        rect = self.mapper.to_logical_rect(CaptureRegion(1920, 0, 1920, 1080))
+        self.assertEqual(rect, (1920, 0, 1536, 864))
+
+    def test_logical_rect_partial(self):
+        rect = self.mapper.to_logical_rect(CaptureRegion(400, 300, 600, 400))
+        self.assertEqual(rect, (320, 240, 480, 320))
+
 
 if __name__ == "__main__":
     unittest.main()

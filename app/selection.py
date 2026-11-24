@@ -148,11 +148,17 @@ class RegionSelector(QObject):
         self._mapper: CoordinateMapper | None = None
         self._start: QPoint | None = None
         self._current: QPoint | None = None
+        self._last_band: QRect | None = None
         self._active = False
 
     @property
     def active(self) -> bool:
         return self._active
+
+    @property
+    def last_band(self) -> QRect | None:
+        """最近一次成功框选的逻辑矩形（用于把边框画回屏幕）。"""
+        return self._last_band
 
     def begin(self) -> None:
         if self._active:
@@ -213,6 +219,7 @@ class RegionSelector(QObject):
             )
         self._teardown()
         if region is not None:
+            self._last_band = QRect(band)
             self.selected.emit(region)
         else:
             self.cancelled.emit()
