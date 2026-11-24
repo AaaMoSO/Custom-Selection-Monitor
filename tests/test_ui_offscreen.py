@@ -150,6 +150,39 @@ class MainWindowSmokeTests(unittest.TestCase):
         self.assertTrue(events)
         self.assertFalse(selector.active)
 
+    def test_clear_region_resets_ui_and_border(self):
+        from PySide6.QtCore import QRect
+
+        from app.capture import CaptureRegion
+        from app.config import AppConfig
+        from app.controller import MonitorController
+        from app.ui.main_window import MainWindow
+
+        config = AppConfig(save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke-2"))
+        controller = MonitorController(config)
+        window = MainWindow(controller, config)
+        window.show()
+        self.app.processEvents()
+
+        region = CaptureRegion(0, 0, 400, 300)
+        controller.set_region(region)
+        window._border.set_region(region, QRect(50, 50, 200, 150))
+        window._sync_buttons(controller.state, region)
+        self.assertTrue(window._clear_region_btn.isEnabled())
+        self.assertIsNotNone(window._border.logical_rect)
+
+        window._clear_region()
+        self.app.processEvents()
+
+        self.assertIsNone(controller.region)
+        self.assertIsNone(window._border.logical_rect)
+        self.assertFalse(window._clear_region_btn.isEnabled())
+        self.assertEqual(window._region_label.text(), "尚未选择区域")
+        self.assertFalse(window._action_btn.isEnabled())
+
+        window.close()
+        controller.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,6 +94,26 @@ class ControllerCacheTests(unittest.TestCase):
         self.assertEqual(list((self.root / "frames").glob("*.png")), [])
         self.assertEqual(controller.state, MonitorState.IDLE)
 
+    def test_clear_region_stops_monitoring_and_resets(self):
+        controller = self.controller
+        controller.start()
+        controller._tick()
+        self.assertTrue(self.cache.wait_idle())
+        self.assertIsNotNone(controller.region)
+
+        controller.clear_region()
+        self.assertIsNone(controller.region)
+        self.assertEqual(controller.state, MonitorState.IDLE)
+        self.assertEqual(len(controller.buffer), 0)
+        self.assertEqual(self.cache.count, 0)
+        self.assertEqual(list((self.root / "frames").glob("*.png")), [])
+
+    def test_clear_region_when_idle_is_safe(self):
+        controller = self.controller
+        controller.clear_region()
+        self.assertIsNone(controller.region)
+        self.assertEqual(controller.state, MonitorState.IDLE)
+
     def test_resume_keeps_cache_and_starts_new_baseline(self):
         controller = self.controller
         controller.start()

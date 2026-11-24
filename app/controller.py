@@ -92,6 +92,20 @@ class MonitorController(QObject):
         self._frames_captured = 0
         self.statsChanged.emit(self.stats())
 
+    def clear_region(self) -> None:
+        """解除框选：必要时先停止监控，然后清空区域与缓存。"""
+        if self._detector.state is not MonitorState.IDLE:
+            self._timer.stop()
+            self._detector.stop()
+            self.logged.emit("已停止监控并清空缓存")
+        self._region = None
+        self._buffer.clear()
+        self._cache.reset()
+        self._frames_captured = 0
+        self.logged.emit("已解除框选")
+        self.stateChanged.emit(self._detector.state)
+        self.statsChanged.emit(self.stats())
+
     def apply_settings(
         self,
         *,

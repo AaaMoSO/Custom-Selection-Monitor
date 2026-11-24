@@ -152,7 +152,12 @@ class MainWindow(QMainWindow):
         self._region_label.setObjectName("regionValue")
         self._region_btn = QPushButton("框选区域")
         self._region_btn.setObjectName("ghost")
+        self._clear_region_btn = QPushButton("解除")
+        self._clear_region_btn.setObjectName("ghost")
+        self._clear_region_btn.setToolTip("解除当前框选，清除区域与缓存")
+        self._clear_region_btn.setEnabled(False)
         row.addWidget(self._region_label, 1)
+        row.addWidget(self._clear_region_btn)
         row.addWidget(self._region_btn)
         body.addLayout(row)
 
@@ -329,6 +334,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 绑定
     def _wire(self) -> None:
         self._region_btn.clicked.connect(self._pick_region)
+        self._clear_region_btn.clicked.connect(self._clear_region)
         self._selector.selected.connect(self._on_region_selected)
         self._selector.cancelled.connect(self._on_region_cancelled)
         self._action_btn.clicked.connect(self._on_action)
@@ -403,6 +409,15 @@ class MainWindow(QMainWindow):
     def _on_region_cancelled(self) -> None:
         self._append_log("已取消框选")
         self._sync_buttons(self._controller.state, self._controller.region)
+
+    def _clear_region(self) -> None:
+        if self._controller.region is None:
+            return
+        self._controller.clear_region()
+        self._border.clear()
+        self._region_label.setText("尚未选择区域")
+        self._sync_buttons(self._controller.state, None)
+        self._append_log("已解除框选，可重新选择区域")
 
     def _on_region_selected(self, region: CaptureRegion) -> None:
         try:
@@ -509,6 +524,8 @@ class MainWindow(QMainWindow):
         region = stats.get("region")
         if region is not None:
             self._region_label.setText(region.describe())
+        else:
+            self._region_label.setText("尚未选择区域")
         self._sync_buttons(stats["state"], region)
 
     def _on_state(self, state: MonitorState) -> None:
@@ -529,6 +546,7 @@ class MainWindow(QMainWindow):
         style.polish(self._chip)
 
     def _sync_buttons(self, state: MonitorState, region: CaptureRegion | None) -> None:
+        self._clear_region_btn.setEnabled(region is not None)
         if state is MonitorState.IDLE:
             self._action_btn.setText("开始监控")
             self._action_btn.setEnabled(region is not None)
