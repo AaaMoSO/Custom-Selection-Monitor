@@ -57,10 +57,13 @@ python -m pip install -r requirements.txt
 ## 运行
 
 ```powershell
+.\run.bat          # 双击也可以，会自动挑选装好依赖的解释器
+# 或者
 python run.py
-# 或
-python -m app
 ```
+
+> **必须用装过 `requirements.txt` 的 Python**（本机是 `D:\python\3.12.10\python.exe`）。
+> LibreOffice、Inkscape 等软件自带的 `python.exe` 里没有 PySide6，会提示缺少依赖。
 
 使用步骤：
 
@@ -97,6 +100,8 @@ tests/            # 单元测试 + 离屏 GUI 冒烟（58 项）
 scripts/
   smoke_test.py   # 真实截屏链路冒烟测试
 docs/             # 界面截图
+run.py            # 启动入口（先检查依赖再启动）
+run.bat           # Windows 启动脚本（自动挑选解释器）
 ```
 
 ## 测试
@@ -119,6 +124,20 @@ pyinstaller --noconfirm --windowed --name PauseRecognition run.py
 ```
 
 打包后 `data/` 与 `captures/` 会生成在 exe 同目录，整个文件夹可以整体拷走。
+
+## 常见问题
+
+**`ModuleNotFoundError: No module named 'PySide6'`？**
+
+用错了解释器。常见于拿 `C:\Program Files\LibreOffice\program\python.exe`、Inkscape 自带的 Python 去跑本项目——它们只服务于自己那套环境，没有 PySide6。
+改用装过依赖的解释器：
+
+```powershell
+python run.py        # 本机的 python 指向 D:\python\3.12.10\python.exe
+.\run.bat            # 或者直接双击，脚本会自动挑选
+```
+
+VS Code 里按 `Ctrl+Shift+P` → `Python: Select Interpreter`，选择 `D:\python\3.12.10\python.exe`，再按 `F5` / `Ctrl+F5` 运行。
 
 ## 已知限制
 
