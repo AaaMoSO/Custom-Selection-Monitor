@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import paths
 from ..capture import CaptureRegion
 from ..config import APP_VERSION, AppConfig
 from ..controller import MonitorController
@@ -83,6 +84,9 @@ class MainWindow(QMainWindow):
             f"Pause recognition v{APP_VERSION} · 每 {controller.interval_ms // 1000} 秒截取一帧，"
             f"缓存 {controller.capacity} 张"
         )
+        self._append_log(
+            f"帧缓存目录：{paths.relative_to_program(controller.cache.directory)}（自动清理）"
+        )
         self._append_log("请先「框选区域」，再点击「开始监控」。")
 
         self._place_window()
@@ -136,7 +140,7 @@ class MainWindow(QMainWindow):
         return row
 
     def _build_region_card(self) -> QFrame:
-        card, body = _card("监控区域与输出")
+        card, body = _card("监控区域 · 输出与缓存")
 
         row = QHBoxLayout()
         row.setSpacing(9)
@@ -151,19 +155,30 @@ class MainWindow(QMainWindow):
         file_row = QHBoxLayout()
         file_row.setSpacing(7)
         self._folder_edit = QLineEdit()
-        self._folder_edit.setPlaceholderText("触发时保存到的文件夹…")
+        self._folder_edit.setPlaceholderText("尾图输出目录（触发暂停时保存）…")
+        self._folder_edit.setToolTip("异常触发时，尾图保存到这个目录；可随时修改")
         file_row.addWidget(self._folder_edit, 1)
         self._browse_btn = QPushButton("浏览")
         self._browse_btn.setObjectName("ghost")
-        self._open_btn = QPushButton("打开")
+        self._open_btn = QPushButton("打开输出")
         self._open_btn.setObjectName("ghost")
+        self._open_btn.setToolTip("打开尾图输出目录")
+        self._cache_btn = QPushButton("打开缓存")
+        self._cache_btn.setObjectName("ghost")
+        self._cache_btn.setToolTip("打开程序目录内的帧缓存文件夹")
         file_row.addWidget(self._browse_btn)
         file_row.addWidget(self._open_btn)
+        file_row.addWidget(self._cache_btn)
         body.addLayout(file_row)
 
-        hint = QLabel("拖拽框选任意矩形（按物理像素截取，已处理 DPI 缩放）；触发时以无损 PNG 存档。")
+        cache_relative = paths.relative_to_program(paths.cache_dir())
+        hint = QLabel(
+            f"拖拽框选任意矩形（按物理像素截取，已处理 DPI 缩放）；"
+            f"最近 10 帧缓存于 {cache_relative}，自动清理，不写系统盘。"
+        )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
+        hint.setToolTip(f"帧缓存目录：{paths.cache_dir()}")
         body.addWidget(hint)
         return card
 
@@ -247,7 +262,7 @@ class MainWindow(QMainWindow):
         self._preview.setObjectName("preview")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setFixedSize(_PREVIEW_W, _PREVIEW_H)
-        self._last_saved = QLabel("最近保存：—")
+        self._last_saved = QLabel("尾图输出：—")
         self._last_saved.setObjectName("lastSaved")
         self._last_saved.setFixedWidth(_PREVIEW_W)
         right.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignRight)
@@ -296,7 +311,8 @@ class MainWindow(QMainWindow):
             spin.valueChanged.connect(self._persist)
         self._folder_edit.editingFinished.connect(self._persist)
         self._browse_btn.clicked.connect(self._browse)
-        self._open_btn.clicked.connect(self._open_folder)
+        self._open_btn.clicked.connect(self._open_output)
+        self._cache_btn.clicked.connect(self._open_cache)
 
     def _load_config(self) -> None:
         self._threshold.setValue(self._config.threshold_percent)
@@ -357,17 +373,23 @@ class MainWindow(QMainWindow):
 
     def _browse(self) -> None:
         start = self._folder_edit.text().strip() or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "选择保存文件夹", start)
+        chosen = QFileDialog.getExistingDirectory(self, "选择尾图输出目录", start)
         if chosen:
             self._folder_edit.setText(chosen)
             self._persist()
 
-    def _open_folder(self) -> None:
+    def _open_output(self) -> None:
         folder = Path(self._folder_edit.text().strip() or str(self._config.resolved_save_folder()))
+        self._open_path(folder, "尾图输出目录")
+
+    def _open_cache(self) -> None:
+        self._open_path(self._controller.cache.directory, "帧缓存目录")
+
+    def _open_path(self, folder: Path, purpose: str) -> None:
         try:
             folder.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            self._append_log(f"无法创建文件夹：{exc}")
+            self._append_log(f"无法打开{purpose}：{exc}")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
@@ -447,7 +469,7 @@ class MainWindow(QMainWindow):
             metrics = self._last_saved.fontMetrics()
             self._last_saved.setText(
                 metrics.elidedText(
-                    f"最近保存：{name}", Qt.TextElideMode.ElideMiddle, _PREVIEW_W
+                    f"尾图输出：{name}", Qt.TextElideMode.ElideMiddle, _PREVIEW_W
                 )
             )
             self._last_saved.setToolTip(str(path))

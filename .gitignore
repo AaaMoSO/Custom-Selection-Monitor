@@ -18,3 +18,7 @@ dist/
 # 运行时产物
 *.log
 screenshots/
+
+# 程序内部数据（帧缓存 / 配置）与默认尾图输出
+data/
+captures/

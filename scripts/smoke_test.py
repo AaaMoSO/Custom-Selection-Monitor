@@ -99,7 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     app.exec()
 
     stats = controller.stats()
+    cache = controller.cache
+    cache.wait_idle()
     controller.shutdown()
+    cache_files = sorted(cache.directory.glob("*.png")) if cache.directory.is_dir() else []
+    print("缓存目录:", cache.directory, "| 退出后保留帧数:", len(cache_files))
+    for path in cache_files[-3:]:
+        print("   ", path.name)
 
     print("区域:", region.describe(), "| 物理桌面:", virtual_desktop())
     print(

@@ -1,4 +1,8 @@
-"""配置读写：阈值、连续未变化上限、容差、保存目录。"""
+"""配置读写：阈值、连续未变化上限、容差、尾图输出目录。
+
+配置文件放在程序目录的 ``data/config.json``，不写 C 盘用户目录；
+旧版本曾把它放在 ``%APPDATA%``，首次读取时做一次兼容迁移。
+"""
 
 from __future__ import annotations
 
@@ -7,19 +11,20 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from . import paths
+
 APP_NAME = "PauseRecognition"
 APP_VERSION = "0.1.0"
 
 
 def config_dir() -> Path:
-    base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME")
-    root = Path(base) if base else Path.home() / ".config"
-    return root / APP_NAME
+    """兼容旧接口：返回配置文件所在目录。"""
+    return paths.data_dir()
 
 
 def default_save_folder() -> Path:
-    pictures = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Pictures"
-    return pictures / "PauseRecognition"
+    """尾图默认输出目录（程序目录内的 captures/）。"""
+    return paths.default_output_dir()
 
 
 @dataclass
@@ -35,7 +40,11 @@ class AppConfig:
     # ------------------------------------------------------------------ 持久化
     @classmethod
     def load(cls, path: Path | None = None) -> "AppConfig":
-        file = path or (config_dir() / "config.json")
+        file = path or paths.config_path()
+        if path is None and not file.exists():
+            legacy = paths.legacy_config_path()
+            if legacy.exists():
+                file = legacy
         try:
             raw = json.loads(file.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
@@ -50,7 +59,7 @@ class AppConfig:
             return cls()
 
     def save(self, path: Path | None = None) -> Path:
-        file = path or (config_dir() / "config.json")
+        file = path or paths.config_path()
         file.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(asdict(self), ensure_ascii=False, indent=2)
         tmp = file.with_suffix(".tmp")

@@ -1,7 +1,9 @@
 """监控调度器：把 1 帧/秒的截屏、缓存、判定、保存串起来。
 
-所有操作都在 Qt 主线程内完成（mss 实例也因此固定在同一线程），
-单帧 1536×864 的截取 + 比对耗时在毫秒级，1 fps 完全无压力。
+缓存分两层：
+* 内存环形缓存 ``FrameBuffer``（10 帧，用于比对与计数，避免频繁读盘）；
+* 磁盘镜像 ``FrameCache``（写入程序目录 ``data/frames``，磁盘上同样只留 10 张）。
+两者都是 1 秒 1 次，磁盘编码在后台线程完成，不阻塞采样。
 """
 
 from __future__ import annotations
@@ -10,7 +12,9 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from . import paths
 from .buffer import Frame, FrameBuffer
+from .cache import FrameCache
 from .capture import CaptureRegion, ScreenCapturer
 from .config import AppConfig
 from .saver import save_frame
@@ -30,6 +34,8 @@ class MonitorController(QObject):
         *,
         capacity: int = 10,
         interval_ms: int = 1000,
+        capturer: ScreenCapturer | None = None,
+        cache: FrameCache | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -37,7 +43,12 @@ class MonitorController(QObject):
         self._interval_ms = int(interval_ms)
         self._capacity = int(capacity)
         self._buffer = FrameBuffer(self._capacity)
-        self._capturer = ScreenCapturer()
+        self._capturer = capturer if capturer is not None else ScreenCapturer()
+        self._cache = (
+            cache
+            if cache is not None
+            else FrameCache(paths.cache_dir(), capacity=self._capacity)
+        )
         self._detector = ChangeDetector(self._detector_config())
         self._region: CaptureRegion | None = None
         self._frames_captured = 0
@@ -59,6 +70,10 @@ class MonitorController(QObject):
     @property
     def buffer(self) -> FrameBuffer:
         return self._buffer
+
+    @property
+    def cache(self) -> FrameCache:
+        return self._cache
 
     @property
     def interval_ms(self) -> int:
@@ -109,11 +124,13 @@ class MonitorController(QObject):
 
         self._buffer.clear()
         self._frames_captured = 0
+        self._cache.reset()
         self._detector.start()
         self._timer.start()
         self.logged.emit(
             f"开始监控 {self._region.describe()}，"
-            f"阈值 {self._config.threshold_percent:g}%，上限 {self._config.max_unchanged} 次"
+            f"阈值 {self._config.threshold_percent:g}%，上限 {self._config.max_unchanged} 次；"
+            f"缓存目录 {self._cache.directory}"
         )
         self.stateChanged.emit(self._detector.state)
         self.statsChanged.emit(self.stats())
@@ -124,7 +141,7 @@ class MonitorController(QObject):
             return
         self._timer.stop()
         self._detector.pause()
-        self.logged.emit("已手动暂停监控")
+        self.logged.emit("已手动暂停监控（缓存保留）")
         self.stateChanged.emit(self._detector.state)
         self.statsChanged.emit(self.stats())
 
@@ -141,6 +158,7 @@ class MonitorController(QObject):
         self._timer.stop()
         self._detector.stop()
         self._buffer.clear()
+        self._cache.reset()
         self._frames_captured = 0
         self.logged.emit("已停止监控并清空缓存")
         self.stateChanged.emit(self._detector.state)
@@ -149,6 +167,7 @@ class MonitorController(QObject):
     def shutdown(self) -> None:
         self._timer.stop()
         self._capturer.close()
+        self._cache.close()
 
     # ------------------------------------------------------------------ 统计
     def stats(self) -> dict:
@@ -164,6 +183,8 @@ class MonitorController(QObject):
             "threshold": self._config.threshold_percent,
             "tolerance": self._config.tolerance,
             "interval_ms": self._interval_ms,
+            "cache_dir": str(self._cache.directory),
+            "cache_size": self._cache.count,
         }
 
     # ------------------------------------------------------------------ 心跳
@@ -189,6 +210,11 @@ class MonitorController(QObject):
         frame = Frame(image=image, captured_at=captured_at, ratio=ratio)
         self._buffer.push(frame)
         self._frames_captured += 1
+        self._cache.store(image, captured_at)
+
+        cache_error = self._cache.consume_error()
+        if cache_error is not None:
+            self.logged.emit(f"缓存写入失败：{cache_error}")
 
         if decision is Decision.TRIGGERED:
             self._timer.stop()
@@ -204,10 +230,10 @@ class MonitorController(QObject):
             path = save_frame(frame.image, folder, captured_at)
             self.logged.emit(
                 f"连续 {self._detector.unchanged_count} 次未变化（上限 "
-                f"{self._config.max_unchanged}），已保存：{path}"
+                f"{self._config.max_unchanged}），尾图已输出：{path}"
             )
         except Exception as exc:
-            self.failed.emit(f"保存截图失败：{exc}")
+            self.failed.emit(f"保存尾图失败：{exc}")
 
         self.triggered.emit(
             {
