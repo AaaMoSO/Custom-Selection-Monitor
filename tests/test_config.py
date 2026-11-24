@@ -71,5 +71,32 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.save_folder, str(Path(tmp) / "old"))
 
 
+    def test_audio_fields_default_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"max_unchanged": 3}), encoding="utf-8")
+            loaded = AppConfig.load(path)
+            self.assertFalse(loaded.audio_enabled)
+            self.assertEqual(loaded.audio_device_id, "")
+            self.assertEqual(loaded.audio_device_name, "")
+            self.assertAlmostEqual(loaded.audio_tolerance_db, 1.5)
+
+    def test_audio_fields_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config = AppConfig(
+                audio_enabled=True,
+                audio_device_id="{0.0.0.00000000}.{abc}",
+                audio_device_name="扬声器",
+                audio_tolerance_db=2.5,
+            )
+            config.save(path)
+            loaded = AppConfig.load(path)
+            self.assertTrue(loaded.audio_enabled)
+            self.assertEqual(loaded.audio_device_id, "{0.0.0.00000000}.{abc}")
+            self.assertEqual(loaded.audio_device_name, "扬声器")
+            self.assertAlmostEqual(loaded.audio_tolerance_db, 2.5)
+
+
 if __name__ == "__main__":
     unittest.main()

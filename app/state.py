@@ -31,6 +31,7 @@ class Decision(Enum):
     UNCHANGED = "unchanged"
     CHANGED = "changed"
     TRIGGERED = "triggered"
+    SKIPPED = "skipped"
 
 
 @dataclass(frozen=True)
@@ -127,3 +128,16 @@ class ChangeDetector:
 
         self._unchanged = 0
         return Decision.CHANGED
+
+    def skip(self, image: np.ndarray) -> Decision:
+        """因外部条件（例如音频不稳定）跳过本次比对。
+
+        基准推进到当前帧，避免下一次比较跨越一段没被分析的间隔；
+        同时清零未变化计数，因为这段区间并不能证明“持续静止”。
+        """
+        if self._state is not MonitorState.MONITORING:
+            return Decision.IGNORED
+        self._baseline = image
+        self._unchanged = 0
+        self._last_result = None
+        return Decision.SKIPPED

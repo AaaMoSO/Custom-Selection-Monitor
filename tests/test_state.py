@@ -108,6 +108,23 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(detector.config.tolerance, 0)
         self.assertEqual(detector.config.max_unchanged, 0)
 
+    def test_skip_advances_baseline_and_clears_counter(self):
+        self.detector.start()
+        self.detector.feed(frame(0))
+        self.detector.feed(frame(0))
+        self.assertEqual(self.detector.unchanged_count, 1)
+
+        self.assertEqual(self.detector.skip(frame(50)), Decision.SKIPPED)
+        self.assertEqual(self.detector.unchanged_count, 0)
+        self.assertIsNone(self.detector.last_ratio)
+
+        # 基准已推进到最新的 50，下一帧 50 应判为未变化
+        self.assertEqual(self.detector.feed(frame(50)), Decision.UNCHANGED)
+        self.assertEqual(self.detector.unchanged_count, 1)
+
+    def test_skip_ignored_when_idle(self):
+        self.assertEqual(self.detector.skip(frame(0)), Decision.IGNORED)
+
 
 if __name__ == "__main__":
     unittest.main()

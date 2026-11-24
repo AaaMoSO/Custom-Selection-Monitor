@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -24,12 +25,14 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import paths
+from ..audio import AudioDevice, default_output_device, is_silent, list_output_devices
 from ..border import RegionBorder
 from ..capture import CaptureRegion
 from ..config import APP_VERSION, AppConfig
@@ -75,6 +78,8 @@ class MainWindow(QMainWindow):
         self._config = config
         self._selector = RegionSelector(self)
         self._border = RegionBorder(self)
+        self._audio_devices: list[AudioDevice] = []
+        self._audio_indicator_cache: tuple[str, str] | None = None
         self._loading = True
 
         self._build()
@@ -243,6 +248,20 @@ class MainWindow(QMainWindow):
         self._tolerance.setSuffix(" 级")
         self._tolerance.setToolTip("单像素任一通道差值不超过该值即视为同一像素，用于吸收噪点")
 
+        self._audio_toggle = QCheckBox("声音检测")
+        self._audio_toggle.setToolTip(
+            "开启后，只有相邻两次采样之间音频电平变化不超过容差时才做像素比对；\n"
+            "音频电平变化会跳过本次比对并清零连续计数。"
+        )
+        self._audio_tolerance = QDoubleSpinBox()
+        self._audio_tolerance.setRange(0.1, 20.0)
+        self._audio_tolerance.setDecimals(1)
+        self._audio_tolerance.setSingleStep(0.5)
+        self._audio_tolerance.setValue(1.5)
+        self._audio_tolerance.setSuffix(" dB")
+        self._audio_tolerance.setFixedWidth(88)
+        self._audio_tolerance.setToolTip("相邻两次采样的电平差不超过该值，才算音频“保持不变”")
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
@@ -252,11 +271,50 @@ class MainWindow(QMainWindow):
         grid.addWidget(self._max_unchanged, 0, 3)
         grid.addWidget(QLabel("像素容差"), 1, 0)
         grid.addWidget(self._tolerance, 1, 1)
+
+        audio_inline = QHBoxLayout()
+        audio_inline.setSpacing(7)
+        tolerance_label = QLabel("容差")
+        tolerance_label.setObjectName("caption")
+        audio_inline.addWidget(self._audio_toggle)
+        audio_inline.addWidget(tolerance_label)
+        audio_inline.addWidget(self._audio_tolerance)
+        audio_inline.addStretch(1)
+        grid.addLayout(audio_inline, 1, 2, 1, 2)
+
+        self._audio_combo = QComboBox()
+        self._audio_combo.setMinimumWidth(180)
+        self._audio_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._audio_combo.setToolTip("选择要监听的音频输出设备（WASAPI 回环）")
+        self._audio_refresh_btn = QPushButton("刷新")
+        self._audio_refresh_btn.setObjectName("ghost")
+        self._audio_refresh_btn.setToolTip("重新检测音频输出设备")
+        self._audio_level_label = QLabel("—")
+        self._audio_level_label.setObjectName("audioLevel")
+        self._audio_level_label.setFixedWidth(92)
+        self._audio_level_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._audio_level_label.setToolTip("当前音频电平：绿色=稳定，黄色=变化，静音=-90 dBFS 以下")
+
+        device_row = QHBoxLayout()
+        device_row.setSpacing(7)
+        device_row.addWidget(self._audio_combo, 1)
+        device_row.addWidget(self._audio_refresh_btn)
+        device_row.addWidget(self._audio_level_label)
+        grid.addWidget(QLabel("输出设备"), 2, 0)
+        grid.addLayout(device_row, 2, 1, 1, 3)
+
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
         body.addLayout(grid)
 
-        hint = QLabel("变化率低于阈值则 n+1；达到阈值则 n 归零；n 超过上限即暂停并保存最后一帧。")
+        hint = QLabel(
+            "变化率低于阈值则 n+1；达到阈值则 n 归零；n 超过上限即暂停。"
+            "开启声音检测后，音频变化会跳过比对并清零计数。"
+        )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         body.addWidget(hint)
@@ -328,7 +386,7 @@ class MainWindow(QMainWindow):
         self._log.setObjectName("log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(400)
-        self._log.setFixedHeight(88)
+        self._log.setFixedHeight(78)
         return self._log
 
     # ------------------------------------------------------------------ 绑定
@@ -355,6 +413,10 @@ class MainWindow(QMainWindow):
         self._border_toggle.toggled.connect(self._on_border_changed)
         self._border_width.valueChanged.connect(self._on_border_changed)
         self._border_color_btn.clicked.connect(self._choose_border_color)
+        self._audio_toggle.toggled.connect(self._on_audio_changed)
+        self._audio_tolerance.valueChanged.connect(self._on_audio_changed)
+        self._audio_combo.currentIndexChanged.connect(self._on_audio_changed)
+        self._audio_refresh_btn.clicked.connect(self._reload_audio_devices)
 
         app = QGuiApplication.instance()
         if app is not None:
@@ -371,14 +433,28 @@ class MainWindow(QMainWindow):
         self._update_color_swatch()
         self._apply_border_style()
 
+        self._audio_toggle.setChecked(bool(self._config.audio_enabled))
+        self._audio_tolerance.setValue(float(self._config.audio_tolerance_db))
+        self._audio_devices = list_output_devices()
+        self._populate_audio_combo(self._config.audio_device_id)
+        if self._audio_toggle.isChecked() and not self._audio_devices:
+            self._audio_toggle.setChecked(False)
+        self._sync_audio_controls()
+        device = self._selected_audio_device()
+        self._controller.configure_audio(
+            self._audio_toggle.isChecked() and device is not None,
+            device,
+            self._config.audio_tolerance_db,
+        )
+
     def _place_window(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             self.resize(620, 700)
             return
         available = screen.availableGeometry()
-        width = min(660, max(560, available.width() - 120))
-        height = min(768, max(480, available.height() - 48))
+        width = min(720, max(560, available.width() - 120))
+        height = min(776, max(480, available.height() - 40))
         self.resize(width, height)
         self.move(
             available.left() + (available.width() - width) // 2,
@@ -492,6 +568,113 @@ class MainWindow(QMainWindow):
             self._config.border_visible,
         )
 
+    # ------------------------------------------------------------------ 声音
+    def _on_audio_changed(self, *args) -> None:
+        if self._loading:
+            return
+        enabled = self._audio_toggle.isChecked()
+        device = self._selected_audio_device()
+        if enabled and device is None:
+            self._loading = True
+            self._audio_toggle.setChecked(False)
+            self._loading = False
+            enabled = False
+            self._append_log("未检测到可用的音频输出设备，无法开启声音检测")
+        self._config.audio_enabled = enabled
+        self._config.audio_tolerance_db = self._audio_tolerance.value()
+        if device is not None:
+            self._config.audio_device_id = device.id
+            self._config.audio_device_name = device.name
+        self._controller.configure_audio(
+            enabled, device if enabled else None, self._config.audio_tolerance_db
+        )
+        self._sync_audio_controls()
+        self._persist()
+
+    def _reload_audio_devices(self, *args) -> None:
+        previous = self._selected_audio_device()
+        preferred_id = previous.id if previous is not None else self._config.audio_device_id
+        self._audio_devices = list_output_devices()
+        self._populate_audio_combo(preferred_id)
+        self._sync_audio_controls()
+        if not self._audio_devices:
+            self._append_log("未检测到可用的音频输出设备（需要声卡与 soundcard 依赖）")
+        elif not self._loading:
+            self._append_log(f"检测到 {len(self._audio_devices)} 个音频输出设备")
+            if self._audio_toggle.isChecked():
+                self._on_audio_changed()
+
+    def _populate_audio_combo(self, preferred_id: str) -> None:
+        self._audio_combo.blockSignals(True)
+        self._audio_combo.clear()
+        if self._audio_devices:
+            for device in self._audio_devices:
+                self._audio_combo.addItem(device.name, device.id)
+            index = self._audio_combo.findData(preferred_id) if preferred_id else -1
+            if index < 0:
+                default = default_output_device()
+                if default is not None:
+                    index = self._audio_combo.findData(default.id)
+            self._audio_combo.setCurrentIndex(index if index >= 0 else 0)
+        else:
+            self._audio_combo.addItem("未检测到音频输出设备", "")
+        self._audio_combo.blockSignals(False)
+
+    def _selected_audio_device(self) -> AudioDevice | None:
+        device_id = self._audio_combo.currentData()
+        if not device_id:
+            return None
+        for device in self._audio_devices:
+            if device.id == device_id:
+                return device
+        return AudioDevice(id=device_id, name=self._audio_combo.currentText())
+
+    def _sync_audio_controls(self) -> None:
+        has_devices = bool(self._audio_devices)
+        enabled = has_devices and self._audio_toggle.isChecked()
+        self._audio_toggle.setEnabled(has_devices)
+        self._audio_combo.setEnabled(enabled)
+        self._audio_tolerance.setEnabled(enabled)
+        self._audio_level_label.setEnabled(enabled)
+        if not has_devices:
+            self._audio_toggle.setToolTip("未检测到可回环录制的音频输出设备")
+        else:
+            self._audio_toggle.setToolTip(
+                "开启后，只有相邻两次采样之间音频电平变化不超过容差时才做像素比对；\n"
+                "音频电平变化会跳过本次比对并清零连续计数。"
+            )
+
+    def _update_audio_indicator(self, stats: dict) -> None:
+        enabled = bool(stats.get("audio_enabled"))
+        level = stats.get("audio_level")
+        stable = stats.get("audio_stable")
+        state = stats.get("state")
+
+        if not enabled:
+            text, color = "—", "#64748b"
+        elif level is None:
+            if state is MonitorState.MONITORING:
+                text, color = "…", "#64748b"
+            else:
+                text, color = "待机", "#64748b"
+        elif is_silent(level):
+            text, color = "静音", "#93a4b8"
+        elif stable is True:
+            text, color = f"{level:.1f} dBFS", "#34d399"
+        elif stable is False:
+            text, color = f"{level:.1f} dBFS", "#fbbf24"
+        else:
+            text, color = f"{level:.1f} dBFS", "#93a4b8"
+
+        cache_key = (text, color)
+        if cache_key == self._audio_indicator_cache:
+            return
+        self._audio_indicator_cache = cache_key
+        self._audio_level_label.setText(text)
+        self._audio_level_label.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: 600;"
+        )
+
     def _persist(self) -> None:
         if self._loading:
             return
@@ -502,6 +685,12 @@ class MainWindow(QMainWindow):
         self._config.save_folder = folder
         self._config.border_visible = self._border_toggle.isChecked()
         self._config.border_width = self._border_width.value()
+        self._config.audio_enabled = self._audio_toggle.isChecked()
+        self._config.audio_tolerance_db = self._audio_tolerance.value()
+        audio_device = self._selected_audio_device()
+        if audio_device is not None:
+            self._config.audio_device_id = audio_device.id
+            self._config.audio_device_name = audio_device.name
         self._controller.apply_settings(
             threshold_percent=self._config.threshold_percent,
             tolerance=self._config.tolerance,
@@ -526,6 +715,7 @@ class MainWindow(QMainWindow):
             self._region_label.setText(region.describe())
         else:
             self._region_label.setText("尚未选择区域")
+        self._update_audio_indicator(stats)
         self._sync_buttons(stats["state"], region)
 
     def _on_state(self, state: MonitorState) -> None:

@@ -36,6 +36,10 @@ class AppConfig:
     border_visible: bool = True
     border_color: str = "#38bdf8"
     border_width: int = 3
+    audio_enabled: bool = False
+    audio_device_id: str = ""
+    audio_device_name: str = ""
+    audio_tolerance_db: float = 1.5
 
     def resolved_save_folder(self) -> Path:
         return Path(self.save_folder) if self.save_folder else default_save_folder()
@@ -60,6 +64,10 @@ class AppConfig:
                 border_visible=bool(raw.get("border_visible", True)),
                 border_color=str(raw.get("border_color", "#38bdf8")),
                 border_width=int(raw.get("border_width", 3)),
+                audio_enabled=bool(raw.get("audio_enabled", False)),
+                audio_device_id=str(raw.get("audio_device_id", "")),
+                audio_device_name=str(raw.get("audio_device_name", "")),
+                audio_tolerance_db=float(raw.get("audio_tolerance_db", 1.5)),
             )
         except (OSError, ValueError, TypeError):
             return cls()

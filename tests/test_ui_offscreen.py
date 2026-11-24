@@ -38,7 +38,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         config = AppConfig(save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke"))
         controller = MonitorController(config)
         window = MainWindow(controller, config)
-        window.resize(660, 700)
+        window.resize(720, 776)
         window.show()
         self.app.processEvents()
 
@@ -49,7 +49,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         scroll = window.findChild(QScrollArea)
         self.assertIsNotNone(scroll)
         # 内容高度应能放进默认窗口（不依赖滚动条）
-        self.assertLessEqual(scroll.widget().sizeHint().height(), 760)
+        self.assertLessEqual(scroll.widget().sizeHint().height(), 790)
 
         # 取消框选后按钮必须恢复可用，不能卡死
         window._region_btn.setEnabled(False)

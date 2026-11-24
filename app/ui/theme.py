@@ -127,7 +127,7 @@ QPushButton#ghost:hover {
     background: #16202b;
 }
 
-QLineEdit, QSpinBox, QDoubleSpinBox {
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background: #0c1219;
     border: 1px solid #22303f;
     border-radius: 8px;
@@ -136,11 +136,36 @@ QLineEdit, QSpinBox, QDoubleSpinBox {
     min-height: 20px;
     selection-background-color: #1d4ed8;
 }
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border-color: #0ea5e9;
 }
-QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
     color: #55647a;
+}
+QComboBox {
+    padding-right: 26px;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 22px;
+    border: none;
+    background: transparent;
+}
+QComboBox::down-arrow {
+    image: url("__ARROW_ICON__");
+    width: 10px;
+    height: 10px;
+}
+QComboBox QAbstractItemView {
+    background: #11161d;
+    border: 1px solid #22303f;
+    border-radius: 6px;
+    color: #dbe6f1;
+    selection-background-color: #0ea5e9;
+    selection-color: #04121c;
+    outline: none;
+    padding: 4px;
 }
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
@@ -222,5 +247,10 @@ QToolTip {
 }
 """
 
-_CHECK_ICON = (Path(__file__).resolve().parent / "assets" / "check.png").as_posix()
-APP_QSS = _QSS_TEMPLATE.replace("__CHECK_ICON__", _CHECK_ICON)
+_ASSETS = Path(__file__).resolve().parent / "assets"
+_CHECK_ICON = (_ASSETS / "check.png").as_posix()
+_ARROW_ICON = (_ASSETS / "arrow.png").as_posix()
+APP_QSS = (
+    _QSS_TEMPLATE.replace("__CHECK_ICON__", _CHECK_ICON)
+    .replace("__ARROW_ICON__", _ARROW_ICON)
+)
