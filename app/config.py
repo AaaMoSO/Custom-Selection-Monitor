@@ -40,6 +40,10 @@ class AppConfig:
     audio_device_id: str = ""
     audio_device_name: str = ""
     audio_tolerance_db: float = 1.5
+    agent_enabled: bool = False
+    agent_base_url: str = ""
+    agent_session_id: str = ""
+    agent_timeout_ms: int = 300_000
 
     def resolved_save_folder(self) -> Path:
         return Path(self.save_folder) if self.save_folder else default_save_folder()
@@ -68,6 +72,10 @@ class AppConfig:
                 audio_device_id=str(raw.get("audio_device_id", "")),
                 audio_device_name=str(raw.get("audio_device_name", "")),
                 audio_tolerance_db=float(raw.get("audio_tolerance_db", 1.5)),
+                agent_enabled=bool(raw.get("agent_enabled", False)),
+                agent_base_url=str(raw.get("agent_base_url", "")),
+                agent_session_id=str(raw.get("agent_session_id", "")),
+                agent_timeout_ms=int(raw.get("agent_timeout_ms", 300_000)),
             )
         except (OSError, ValueError, TypeError):
             return cls()

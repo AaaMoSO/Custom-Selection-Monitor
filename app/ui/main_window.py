@@ -7,12 +7,13 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -32,6 +33,18 @@ from PySide6.QtWidgets import (
 )
 
 from .. import paths
+from ..agent import (
+    AgentSendTask,
+    Incident,
+    build_message,
+    ensure_playbook,
+    incident_dir,
+    new_incident_id,
+    playbook_version,
+    save_failure,
+    save_incident,
+    save_reply,
+)
 from ..audio import AudioDevice, default_output_device, is_silent, list_output_devices
 from ..border import RegionBorder
 from ..capture import CaptureRegion
@@ -39,6 +52,8 @@ from ..config import APP_VERSION, AppConfig
 from ..controller import MonitorController
 from ..selection import RegionSelector
 from ..state import MonitorState
+from .agent_ui import AgentSettingsDialog, HandoffDialog
+from .qt_image import numpy_to_qimage
 
 _PREVIEW_W = 172
 _PREVIEW_H = 97
@@ -80,6 +95,8 @@ class MainWindow(QMainWindow):
         self._border = RegionBorder(self)
         self._audio_devices: list[AudioDevice] = []
         self._audio_indicator_cache: tuple[str, str] | None = None
+        self._incident_seq = 0
+        self._agent_tasks: list[AgentSendTask] = []
         self._loading = True
 
         self._build()
@@ -144,7 +161,11 @@ class MainWindow(QMainWindow):
         version = QLabel(f"v{APP_VERSION}")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        self._agent_btn = QPushButton("Agent")
+        self._agent_btn.setObjectName("ghost")
+        self._agent_btn.setToolTip("配置：异常发生时是否交给 DSH Agent 处理")
         row.addLayout(text, 1)
+        row.addWidget(self._agent_btn)
         row.addWidget(version)
         return row
 
@@ -393,6 +414,7 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self._region_btn.clicked.connect(self._pick_region)
         self._clear_region_btn.clicked.connect(self._clear_region)
+        self._agent_btn.clicked.connect(self._open_agent_settings)
         self._selector.selected.connect(self._on_region_selected)
         self._selector.cancelled.connect(self._on_region_cancelled)
         self._action_btn.clicked.connect(self._on_action)
@@ -768,24 +790,171 @@ class MainWindow(QMainWindow):
             )
             self._last_saved.setToolTip(str(path))
         QApplication.alert(self, 2500)
+        if self._config.agent_enabled:
+            self._offer_handoff(payload)
 
     def _set_preview(self, image: np.ndarray) -> None:
-        qimage = self._to_qimage(image)
-        pixmap = QPixmap.fromImage(qimage).scaled(
+        pixmap = QPixmap.fromImage(numpy_to_qimage(image)).scaled(
             QSize(_PREVIEW_W - 8, _PREVIEW_H - 8),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self._preview.setPixmap(pixmap)
 
-    @staticmethod
-    def _to_qimage(image: np.ndarray) -> QImage:
-        data = np.ascontiguousarray(image)
-        height, width, channels = data.shape
-        qimage = QImage(
-            data.data, width, height, channels * width, QImage.Format.Format_RGB888
+    # ------------------------------------------------------------------ Agent
+    def _open_agent_settings(self) -> None:
+        ensure_playbook()
+        dialog = AgentSettingsDialog(self._config, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        dialog.apply_to(self._config)
+        self._persist()
+        state = "已启用" if self._config.agent_enabled else "已关闭"
+        self._append_log(f"Agent 接管：{state}")
+
+    def _audio_text(self, stats: dict) -> str:
+        if not stats.get("audio_enabled"):
+            return "音频未启用"
+        level = stats.get("audio_level")
+        if level is None:
+            return "音频无数据"
+        stable = stats.get("audio_stable")
+        label = "稳定" if stable is True else "变化" if stable is False else "待判"
+        return f"音频 {level:.1f} dBFS · {label}"
+
+    def _offer_handoff(self, payload: dict) -> None:
+        if self._agent_tasks:
+            self._append_log("上一个 Agent 任务仍在进行，本次异常未交给 Agent")
+            return
+        if not self._config.agent_base_url.strip():
+            self._append_log("Agent 已启用但未配置接口地址")
+            QMessageBox.information(
+                self, "Agent 未配置", "请先在「Agent」设置里填写接口地址，或点「自动探测」。"
+            )
+            return
+
+        region = payload.get("region")
+        if not isinstance(region, CaptureRegion):
+            return
+        stats = self._controller.stats()
+        captured_at = payload.get("captured_at") or datetime.now()
+        incident = Incident(
+            incident_id=new_incident_id(captured_at),
+            sequence=self._incident_seq + 1,
+            captured_at=captured_at,
+            region=region,
+            unchanged=int(payload.get("unchanged") or stats.get("unchanged") or 0),
+            max_unchanged=int(stats.get("max_unchanged") or self._config.max_unchanged),
+            ratio=payload.get("ratio"),
+            audio_text=self._audio_text(stats),
+            tail_image=payload.get("image"),
         )
-        return qimage.copy()
+
+        dialog = HandoffDialog(incident, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._append_log("已忽略本次异常，未交给 Agent")
+            return
+
+        self._incident_seq += 1
+        try:
+            playbook = ensure_playbook()
+            message = build_message(incident, playbook, playbook_version(playbook))
+            folder = save_incident(incident, message)
+        except OSError as exc:
+            self._append_log(f"保存异常记录失败：{exc}")
+            return
+
+        self._append_log(
+            f"已交给 Agent（异常 #{incident.sequence}），等待回执…（监控保持暂停，处理完可点继续监控）"
+        )
+        task = AgentSendTask(
+            base_url=self._config.agent_base_url,
+            session_id=self._config.agent_session_id,
+            cwd=str(paths.program_dir()),
+            prompt=message,
+            files=[str(folder / "tail.png")],
+            timeout_ms=self._config.agent_timeout_ms,
+            request_id=incident.incident_id,
+        )
+        task.completed.connect(
+            lambda result, inc=incident, t=task: self._on_agent_completed(inc, result, t)
+        )
+        task.failed.connect(
+            lambda error, inc=incident, t=task: self._on_agent_failed(inc, error, t)
+        )
+        self._agent_tasks.append(task)
+        task.start()
+
+    def _on_agent_completed(self, incident: Incident, result: dict, task: AgentSendTask) -> None:
+        self._release_task(task)
+        try:
+            text, parsed = save_reply(incident, result)
+        except OSError as exc:
+            self._append_log(f"保存 Agent 回执失败：{exc}")
+            return
+
+        session_id = str(result.get("sessionId") or "")
+        if session_id and session_id != self._config.agent_session_id:
+            self._config.agent_session_id = session_id
+            try:
+                self._config.save()
+            except OSError as exc:
+                self._append_log(f"保存会话 ID 失败：{exc}")
+
+        reason = str(result.get("reason") or "")
+        if parsed:
+            verdict = str(parsed.get("verdict") or "unknown")
+            summary = str(parsed.get("summary") or "")
+            confidence = parsed.get("confidence")
+            line = f"Agent 回执：{verdict}"
+            if isinstance(confidence, (int, float)):
+                line += f"（置信度 {float(confidence):.2f}）"
+            self._append_log(line + (f" · {summary}" if summary else ""))
+        elif text:
+            self._append_log(f"Agent 回复（未结构化）：{text[:120]}")
+        else:
+            self._append_log(f"Agent 未返回文本（reason={reason or 'unknown'}）")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Agent 处理结果")
+        if reason == "input-required":
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText("Agent 需要你在 DSH 里确认")
+            box.setInformativeText(text[:300] if text else "请切到 DSH 的对应会话完成审批。")
+        elif reason == "timeout":
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText("等待 Agent 超时")
+            box.setInformativeText(text[:300] if text else "Agent 可能仍在后台运行。")
+        elif parsed:
+            box.setIcon(QMessageBox.Icon.Information)
+            verdict = str(parsed.get("verdict") or "unknown")
+            confidence = parsed.get("confidence")
+            suffix = (
+                f"（置信度 {float(confidence):.2f}）"
+                if isinstance(confidence, (int, float))
+                else ""
+            )
+            box.setText(f"Agent 判定：{verdict}{suffix}")
+            box.setInformativeText(str(parsed.get("summary") or ""))
+        else:
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText("Agent 已回复")
+            box.setInformativeText(text[:300] if text else "没有可显示的内容。")
+        box.setDetailedText(text or "（无正文）")
+        box.exec()
+
+    def _on_agent_failed(self, incident: Incident, error: str, task: AgentSendTask) -> None:
+        self._release_task(task)
+        try:
+            save_failure(incident, error)
+        except OSError:
+            pass
+        self._append_log(f"Agent 发送失败：{error}")
+        QMessageBox.warning(self, "Agent 发送失败", error)
+
+    def _release_task(self, task: AgentSendTask) -> None:
+        if task in self._agent_tasks:
+            self._agent_tasks.remove(task)
 
     def _on_failed(self, message: str) -> None:
         self._append_log(f"错误：{message}")

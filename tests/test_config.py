@@ -97,6 +97,28 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.audio_device_name, "扬声器")
             self.assertAlmostEqual(loaded.audio_tolerance_db, 2.5)
 
+    def test_agent_fields_default_and_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            defaults = AppConfig()
+            self.assertFalse(defaults.agent_enabled)
+            self.assertEqual(defaults.agent_base_url, "")
+            self.assertEqual(defaults.agent_session_id, "")
+            self.assertEqual(defaults.agent_timeout_ms, 300_000)
+
+            config = AppConfig(
+                agent_enabled=True,
+                agent_base_url="http://127.0.0.1:56193/conversation-api",
+                agent_session_id="session-abc",
+                agent_timeout_ms=120_000,
+            )
+            config.save(path)
+            loaded = AppConfig.load(path)
+            self.assertTrue(loaded.agent_enabled)
+            self.assertEqual(loaded.agent_base_url, config.agent_base_url)
+            self.assertEqual(loaded.agent_session_id, "session-abc")
+            self.assertEqual(loaded.agent_timeout_ms, 120_000)
+
 
 if __name__ == "__main__":
     unittest.main()

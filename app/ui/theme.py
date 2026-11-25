@@ -245,6 +245,30 @@ QToolTip {
     border: 1px solid #2a3a4d;
     padding: 4px 8px;
 }
+
+QDialog {
+    background: #0b0f14;
+}
+QLabel#dialogTitle {
+    font-size: 17px;
+    font-weight: 700;
+    color: #eef4fb;
+}
+QGroupBox {
+    border: 1px solid #1d2632;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding: 14px 10px 8px 10px;
+    color: #8fa2b6;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    color: #8fa2b6;
+    font-weight: 700;
+    font-size: 11px;
+}
 """
 
 _ASSETS = Path(__file__).resolve().parent / "assets"

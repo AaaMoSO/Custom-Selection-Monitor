@@ -183,6 +183,34 @@ class MainWindowSmokeTests(unittest.TestCase):
         window.close()
         controller.shutdown()
 
+    def test_agent_dialogs_construct(self):
+        import datetime
+
+        from app.agent import Incident, new_incident_id
+        from app.capture import CaptureRegion
+        from app.config import AppConfig
+        from app.ui.agent_ui import AgentSettingsDialog, HandoffDialog
+
+        config = AppConfig(agent_enabled=True, agent_base_url="http://127.0.0.1:1/conversation-api")
+        settings = AgentSettingsDialog(config)
+        self.assertIn("Agent", settings.windowTitle())
+        settings.close()
+
+        incident = Incident(
+            incident_id=new_incident_id(),
+            sequence=1,
+            captured_at=datetime.datetime.now(),
+            region=CaptureRegion(0, 0, 100, 80),
+            unchanged=6,
+            max_unchanged=5,
+            ratio=0.0,
+            audio_text="音频未启用",
+            tail_image=np.zeros((80, 100, 3), dtype=np.uint8),
+        )
+        handoff = HandoffDialog(incident)
+        self.assertEqual(handoff.windowTitle(), "发现异常")
+        handoff.close()
+
 
 if __name__ == "__main__":
     unittest.main()
