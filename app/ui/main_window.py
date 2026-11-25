@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from .. import paths
 from ..agent import (
+    AgentGate,
     AgentSendTask,
     Incident,
     build_message,
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
         self._audio_indicator_cache: tuple[str, str] | None = None
         self._incident_seq = 0
         self._agent_tasks: list[AgentSendTask] = []
+        self._agent_gate = AgentGate()
         self._loading = True
 
         self._build()
@@ -790,8 +792,31 @@ class MainWindow(QMainWindow):
             )
             self._last_saved.setToolTip(str(path))
         QApplication.alert(self, 2500)
-        if self._config.agent_enabled:
-            self._offer_handoff(payload)
+        if not self._config.agent_enabled:
+            return
+        if not self._config.agent_base_url.strip():
+            self._append_log("Agent 已启用但未配置接口地址")
+            QMessageBox.information(
+                self, "Agent 未配置", "请先在「Agent」设置里填写接口地址，或点「自动探测」。"
+            )
+            return
+        if self._agent_tasks:
+            self._append_log("上一个 Agent 任务仍在进行，本次未询问")
+            return
+
+        region = payload.get("region")
+        if not isinstance(region, CaptureRegion):
+            return
+        decision = self._agent_gate.check(
+            region,
+            payload.get("image"),
+            cooldown_minutes=self._config.agent_cooldown_minutes,
+            hourly_limit=self._config.agent_hourly_limit,
+        )
+        if not decision.allowed:
+            self._append_log(f"本次未询问 Agent：{decision.reason}")
+            return
+        self._offer_handoff(payload, decision.recurrence)
 
     def _set_preview(self, image: np.ndarray) -> None:
         pixmap = QPixmap.fromImage(numpy_to_qimage(image)).scaled(
@@ -822,17 +847,7 @@ class MainWindow(QMainWindow):
         label = "稳定" if stable is True else "变化" if stable is False else "待判"
         return f"音频 {level:.1f} dBFS · {label}"
 
-    def _offer_handoff(self, payload: dict) -> None:
-        if self._agent_tasks:
-            self._append_log("上一个 Agent 任务仍在进行，本次异常未交给 Agent")
-            return
-        if not self._config.agent_base_url.strip():
-            self._append_log("Agent 已启用但未配置接口地址")
-            QMessageBox.information(
-                self, "Agent 未配置", "请先在「Agent」设置里填写接口地址，或点「自动探测」。"
-            )
-            return
-
+    def _offer_handoff(self, payload: dict, recurrence: int = 0) -> None:
         region = payload.get("region")
         if not isinstance(region, CaptureRegion):
             return
@@ -847,6 +862,7 @@ class MainWindow(QMainWindow):
             max_unchanged=int(stats.get("max_unchanged") or self._config.max_unchanged),
             ratio=payload.get("ratio"),
             audio_text=self._audio_text(stats),
+            recurrence=recurrence,
             tail_image=payload.get("image"),
         )
 

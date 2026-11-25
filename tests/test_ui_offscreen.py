@@ -211,6 +211,23 @@ class MainWindowSmokeTests(unittest.TestCase):
         self.assertEqual(handoff.windowTitle(), "发现异常")
         handoff.close()
 
+    def test_playbook_editor_and_history_construct(self):
+        import tempfile
+        from unittest import mock
+
+        from app import paths
+        from app.ui.agent_ui import AgentHistoryDialog, PlaybookEditorDialog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(paths, "data_dir", return_value=Path(tmp)):
+                editor = PlaybookEditorDialog()
+                self.assertIn("规则手册", editor.windowTitle())
+                editor.close()
+
+                history = AgentHistoryDialog()
+                self.assertIn("历史", history.windowTitle())
+                history.close()
+
 
 if __name__ == "__main__":
     unittest.main()

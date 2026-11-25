@@ -15,11 +15,13 @@ import shutil
 import socket
 import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib import error, parse, request
 
+import numpy as np
 from PySide6.QtCore import QObject, Signal
 
 from . import paths
@@ -227,6 +229,167 @@ def _read_json(target: Path) -> dict:
         return json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def write_playbook(text: str, path: Path | None = None) -> int:
+    """保存规则手册：内容有变化时版本号 +1，返回新版本。"""
+    target = Path(path) if path is not None else playbook_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    body = _VERSION_RE.sub("", text or "", count=1).strip()
+    if not body:
+        raise ValueError("规则手册不能为空")
+
+    old = ""
+    if target.exists():
+        try:
+            old = target.read_text(encoding="utf-8")
+        except OSError:
+            old = ""
+    old_body = _VERSION_RE.sub("", old, count=1).strip()
+    if target.exists():
+        version = playbook_version(target)
+        if body != old_body:
+            version += 1
+    else:
+        version = 1
+    version = max(1, version)
+
+    target.write_text(f"<!-- playbook-version: {version} -->\n\n{body}\n", encoding="utf-8")
+    return version
+
+
+# --------------------------------------------------------------------- 去重与频控
+def image_hash(image: np.ndarray | None) -> int:
+    """差值哈希（dHash）：9×8 灰度，相邻像素比较得到 64 位。"""
+    if image is None:
+        return 0
+    try:
+        from PIL import Image
+
+        gray = np.asarray(image, dtype=np.float32).mean(axis=2)
+        small = Image.fromarray(gray.astype(np.uint8)).resize((9, 8), Image.BILINEAR)
+        pixels = np.asarray(small, dtype=np.int16)
+        bits = (pixels[:, 1:] > pixels[:, :-1]).flatten()
+    except Exception:
+        return 0
+    value = 0
+    for bit in bits:
+        value = (value << 1) | int(bit)
+    return value
+
+
+def hamming(left: int, right: int) -> int:
+    return bin(left ^ right).count("1")
+
+
+def _region_key(region: CaptureRegion) -> str:
+    return f"{region.width}x{region.height}@{region.left},{region.top}"
+
+
+@dataclass
+class OfferDecision:
+    allowed: bool
+    reason: str = ""
+    recurrence: int = 0
+
+
+@dataclass
+class _Offer:
+    at: datetime
+    region_key: str
+    digest: int
+
+
+class AgentGate:
+    """冷却、每小时上限与相似图复发计数（进程内有效）。"""
+
+    def __init__(self, dedup_minutes: int = 10) -> None:
+        self._offers: deque[_Offer] = deque()
+        self._dedup_minutes = dedup_minutes
+
+    def check(
+        self,
+        region: CaptureRegion,
+        image: np.ndarray | None,
+        cooldown_minutes: int = 5,
+        hourly_limit: int = 6,
+        now: datetime | None = None,
+    ) -> OfferDecision:
+        moment = now or datetime.now()
+        self._prune(moment)
+
+        if hourly_limit > 0:
+            recent = [offer for offer in self._offers if moment - offer.at < timedelta(hours=1)]
+            if len(recent) >= hourly_limit:
+                return OfferDecision(False, f"已达到每小时 {hourly_limit} 次上限")
+
+        key = _region_key(region)
+        if cooldown_minutes > 0:
+            last = max(
+                (offer.at for offer in self._offers if offer.region_key == key),
+                default=None,
+            )
+            if last is not None and moment - last < timedelta(minutes=cooldown_minutes):
+                remain = max(1, cooldown_minutes - int((moment - last).total_seconds() // 60))
+                return OfferDecision(False, f"冷却中（约 {remain} 分钟后可再次询问）")
+
+        digest = image_hash(image)
+        recurrence = 0
+        if digest:
+            for offer in self._offers:
+                if offer.region_key != key:
+                    continue
+                if moment - offer.at > timedelta(minutes=self._dedup_minutes):
+                    continue
+                if hamming(offer.digest, digest) <= 4:
+                    recurrence += 1
+
+        self._offers.append(_Offer(moment, key, digest))
+        return OfferDecision(True, "", recurrence)
+
+    def _prune(self, now: datetime) -> None:
+        cutoff = now - timedelta(hours=1)
+        while self._offers and self._offers[0].at < cutoff:
+            self._offers.popleft()
+
+
+# --------------------------------------------------------------------- 历史记录
+def list_incidents(limit: int = 200) -> list[dict]:
+    """读取 ``data/incidents/*/record.json``，按时间倒序。"""
+    root = paths.data_dir() / "incidents"
+    if not root.is_dir():
+        return []
+
+    rows: list[dict] = []
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        record = _read_json(folder / "record.json")
+        if not record:
+            continue
+        record["folder"] = str(folder)
+        record["incident_id"] = record.get("incident_id") or folder.name
+        record["has_tail"] = (folder / "tail.png").exists()
+        rows.append(record)
+    rows.sort(key=lambda row: str(row.get("captured_at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def load_incident_detail(record: dict) -> dict:
+    """补齐某条记录的 message / reply 正文与目录。"""
+    folder = Path(str(record.get("folder") or ""))
+    detail = dict(record)
+    detail["message"] = _read_text(folder / "message.md")
+    detail["reply"] = _read_text(folder / "reply.md")
+    return detail
+
+
+def _read_text(target: Path) -> str:
+    try:
+        return target.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 # --------------------------------------------------------------------- API 客户端

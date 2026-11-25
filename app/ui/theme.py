@@ -207,6 +207,38 @@ QCheckBox::indicator:checked {
     image: url("__CHECK_ICON__");
 }
 
+QListWidget {
+    background: #0c1219;
+    border: 1px solid #1a2330;
+    border-radius: 10px;
+    color: #c3d2e2;
+    outline: none;
+    padding: 4px;
+}
+QListWidget::item {
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+QListWidget::item:hover {
+    background: #16202b;
+}
+QListWidget::item:selected {
+    background: #0ea5e9;
+    color: #04121c;
+}
+
+QPlainTextEdit {
+    background: #090e14;
+    border: 1px solid #1a2330;
+    border-radius: 10px;
+    color: #b8c7d9;
+    padding: 8px;
+    selection-background-color: #1d4ed8;
+}
+QPlainTextEdit#codeEditor {
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
+}
 QPlainTextEdit#log {
     background: #090e14;
     border: 1px solid #1a2330;

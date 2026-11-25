@@ -105,12 +105,16 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(defaults.agent_base_url, "")
             self.assertEqual(defaults.agent_session_id, "")
             self.assertEqual(defaults.agent_timeout_ms, 300_000)
+            self.assertEqual(defaults.agent_cooldown_minutes, 5)
+            self.assertEqual(defaults.agent_hourly_limit, 6)
 
             config = AppConfig(
                 agent_enabled=True,
                 agent_base_url="http://127.0.0.1:56193/conversation-api",
                 agent_session_id="session-abc",
                 agent_timeout_ms=120_000,
+                agent_cooldown_minutes=12,
+                agent_hourly_limit=3,
             )
             config.save(path)
             loaded = AppConfig.load(path)
@@ -118,6 +122,8 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.agent_base_url, config.agent_base_url)
             self.assertEqual(loaded.agent_session_id, "session-abc")
             self.assertEqual(loaded.agent_timeout_ms, 120_000)
+            self.assertEqual(loaded.agent_cooldown_minutes, 12)
+            self.assertEqual(loaded.agent_hourly_limit, 3)
 
 
 if __name__ == "__main__":

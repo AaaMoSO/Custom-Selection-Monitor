@@ -2,7 +2,7 @@ import json
 import tempfile
 import threading
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from unittest import mock
 
 from app import agent, paths
 from app.agent import (
+    AgentGate,
     ConversationApi,
     ConversationApiError,
     Incident,
@@ -18,10 +19,14 @@ from app.agent import (
     discover_base_url,
     ensure_playbook,
     extract_reply_json,
+    hamming,
+    image_hash,
+    list_incidents,
     normalize_base_url,
     playbook_version,
     save_incident,
     save_reply,
+    write_playbook,
 )
 from app.capture import CaptureRegion
 
@@ -210,6 +215,111 @@ class MessageTests(unittest.TestCase):
                 self.assertEqual(record["status"], "replied")
                 self.assertEqual(record["verdict"], "handled")
                 self.assertEqual(record["session_id"], "s1")
+
+
+class GateTests(unittest.TestCase):
+    def setUp(self):
+        self.region = CaptureRegion(0, 0, 100, 80)
+        self.image = np.tile(np.arange(100, dtype=np.uint8)[None, :, None], (80, 1, 3))
+
+    def test_cooldown_blocks_then_allows(self):
+        gate = AgentGate()
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        self.assertTrue(
+            gate.check(self.region, self.image, cooldown_minutes=5, hourly_limit=0, now=t0).allowed
+        )
+        blocked = gate.check(
+            self.region, self.image, cooldown_minutes=5, hourly_limit=0,
+            now=t0 + timedelta(minutes=1),
+        )
+        self.assertFalse(blocked.allowed)
+        self.assertIn("冷却", blocked.reason)
+        allowed = gate.check(
+            self.region, self.image, cooldown_minutes=5, hourly_limit=0,
+            now=t0 + timedelta(minutes=6),
+        )
+        self.assertTrue(allowed.allowed)
+
+    def test_hourly_limit(self):
+        gate = AgentGate()
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        for offset in (0, 1):
+            decision = gate.check(
+                self.region, self.image, cooldown_minutes=0, hourly_limit=2,
+                now=t0 + timedelta(minutes=offset),
+            )
+            self.assertTrue(decision.allowed)
+        blocked = gate.check(
+            self.region, self.image, cooldown_minutes=0, hourly_limit=2,
+            now=t0 + timedelta(minutes=2),
+        )
+        self.assertFalse(blocked.allowed)
+        self.assertIn("上限", blocked.reason)
+
+    def test_recurrence_counts_similar_images(self):
+        gate = AgentGate()
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        first = gate.check(self.region, self.image, cooldown_minutes=0, hourly_limit=0, now=t0)
+        second = gate.check(
+            self.region, self.image, cooldown_minutes=0, hourly_limit=0,
+            now=t0 + timedelta(minutes=1),
+        )
+        self.assertEqual(first.recurrence, 0)
+        self.assertEqual(second.recurrence, 1)
+
+    def test_recurrence_ignores_other_regions(self):
+        gate = AgentGate()
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        gate.check(self.region, self.image, cooldown_minutes=0, hourly_limit=0, now=t0)
+        other = CaptureRegion(500, 500, 100, 80)
+        decision = gate.check(
+            other, self.image, cooldown_minutes=0, hourly_limit=0,
+            now=t0 + timedelta(minutes=1),
+        )
+        self.assertEqual(decision.recurrence, 0)
+
+    def test_image_hash_is_stable(self):
+        digest = image_hash(self.image)
+        self.assertNotEqual(digest, 0)
+        self.assertEqual(hamming(digest, image_hash(self.image.copy())), 0)
+
+
+class PlaybookWriteTests(unittest.TestCase):
+    def test_version_increments_only_on_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "playbook.md"
+            self.assertEqual(write_playbook("## 场景 1\n- 步骤：a\n", target), 1)
+            self.assertEqual(write_playbook("## 场景 1\n- 步骤：a\n", target), 1)
+            self.assertEqual(write_playbook("## 场景 1\n- 步骤：b\n", target), 2)
+            self.assertEqual(playbook_version(target), 2)
+
+    def test_empty_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                write_playbook("   ", Path(tmp) / "playbook.md")
+
+
+class HistoryTests(unittest.TestCase):
+    def test_list_incidents_reads_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(paths, "data_dir", return_value=Path(tmp)):
+                incident = Incident(
+                    incident_id="20261125-141900-aaaa",
+                    sequence=1,
+                    captured_at=datetime(2026, 11, 25, 14, 19, 0),
+                    region=CaptureRegion(0, 0, 10, 10),
+                    unchanged=6,
+                    max_unchanged=5,
+                    ratio=0.0,
+                    audio_text="音频未启用",
+                    tail_image=np.zeros((10, 10, 3), dtype=np.uint8),
+                )
+                save_incident(incident, "hello")
+                rows = list_incidents()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["incident_id"], "20261125-141900-aaaa")
+                self.assertTrue(rows[0]["has_tail"])
+                self.assertIn("folder", rows[0])
 
 
 if __name__ == "__main__":
