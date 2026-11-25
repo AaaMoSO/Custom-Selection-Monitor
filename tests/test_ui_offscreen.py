@@ -183,18 +183,20 @@ class MainWindowSmokeTests(unittest.TestCase):
         window.close()
         controller.shutdown()
 
-    def test_agent_dialogs_construct(self):
+    def test_agent_panels_construct(self):
         import datetime
 
         from app.agent import Incident, new_incident_id
         from app.capture import CaptureRegion
         from app.config import AppConfig
-        from app.ui.agent_ui import AgentSettingsDialog, HandoffDialog
+        from app.ui.agent_panels import AgentConnectionPanel
+        from app.ui.agent_ui import HandoffDialog
 
         config = AppConfig(agent_enabled=True, agent_base_url="http://127.0.0.1:1/conversation-api")
-        settings = AgentSettingsDialog(config)
-        self.assertIn("Agent", settings.windowTitle())
-        settings.close()
+        panel = AgentConnectionPanel(config)
+        panel.apply_to(config)
+        self.assertEqual(config.agent_base_url, "http://127.0.0.1:1/conversation-api")
+        panel.close()
 
         incident = Incident(
             incident_id=new_incident_id(),
@@ -211,22 +213,39 @@ class MainWindowSmokeTests(unittest.TestCase):
         self.assertEqual(handoff.windowTitle(), "发现异常")
         handoff.close()
 
-    def test_playbook_editor_and_history_construct(self):
+    def test_playbook_and_history_panels_construct(self):
         import tempfile
         from unittest import mock
 
         from app import paths
-        from app.ui.agent_ui import AgentHistoryDialog, PlaybookEditorDialog
+        from app.ui.agent_panels import AgentHistoryPanel, PlaybookPanel
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(paths, "data_dir", return_value=Path(tmp)):
-                editor = PlaybookEditorDialog()
-                self.assertIn("规则手册", editor.windowTitle())
+                editor = PlaybookPanel()
+                self.assertTrue(editor._path_label.text().endswith("playbook.md"))
                 editor.close()
 
-                history = AgentHistoryDialog()
-                self.assertIn("历史", history.windowTitle())
+                history = AgentHistoryPanel()
+                history.refresh()
                 history.close()
+
+    def test_main_window_has_tabs(self):
+        from app.config import AppConfig
+        from app.controller import MonitorController
+        from app.ui.main_window import MainWindow
+
+        config = AppConfig(save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke-3"))
+        controller = MonitorController(config)
+        window = MainWindow(controller, config)
+        window.show()
+        self.app.processEvents()
+
+        titles = [window._tabs.tabText(index) for index in range(window._tabs.count())]
+        self.assertEqual(titles, ["监控", "Agent", "规则手册", "处理历史"])
+        self.assertIs(window._tabs.currentWidget(), window._tabs.widget(0))
+        window.close()
+        controller.shutdown()
 
 
 if __name__ == "__main__":

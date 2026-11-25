@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -53,7 +54,8 @@ from ..config import APP_VERSION, AppConfig
 from ..controller import MonitorController
 from ..selection import RegionSelector
 from ..state import MonitorState
-from .agent_ui import AgentSettingsDialog, HandoffDialog
+from .agent_panels import AgentConnectionPanel, AgentHistoryPanel, PlaybookPanel
+from .agent_ui import HandoffDialog
 from .qt_image import numpy_to_qimage
 
 _PREVIEW_W = 172
@@ -64,7 +66,7 @@ def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setObjectName("card")
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(14, 10, 14, 12)
+    layout.setContentsMargins(14, 9, 14, 10)
     layout.setSpacing(7)
     if title:
         label = QLabel(title)
@@ -105,6 +107,7 @@ class MainWindow(QMainWindow):
         self._wire()
         self._load_config()
         self._loading = False
+        self._refresh_agent_status()
 
         self._apply_chip(controller.state)
         self._sync_buttons(controller.state, controller.region)
@@ -122,32 +125,50 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ 构建
     def _build(self) -> None:
         self.setWindowTitle("Pause recognition · 屏幕静默监控")
-        self.setMinimumSize(560, 480)
+        self.setMinimumSize(640, 520)
 
         shell = QWidget()
         shell.setObjectName("shell")
         shell_layout = QVBoxLayout(shell)
-        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setContentsMargins(18, 12, 18, 12)
+        shell_layout.setSpacing(8)
+        shell_layout.addLayout(self._build_header())
 
+        self._tabs = QTabWidget()
+        self._tabs.setObjectName("mainTabs")
+        self._tabs.addTab(self._build_monitor_tab(), "监控")
+        self._agent_panel = AgentConnectionPanel(self._config)
+        agent_scroll = QScrollArea()
+        agent_scroll.setWidgetResizable(True)
+        agent_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        agent_scroll.setWidget(self._agent_panel)
+        self._tabs.addTab(agent_scroll, "Agent")
+        self._playbook_panel = PlaybookPanel()
+        self._tabs.addTab(self._playbook_panel, "规则手册")
+        self._history_panel = AgentHistoryPanel()
+        self._tabs.addTab(self._history_panel, "处理历史")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        shell_layout.addWidget(self._tabs, 1)
+        self.setCentralWidget(shell)
+
+    def _build_monitor_tab(self) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
         content.setObjectName("root")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(18, 12, 18, 12)
-        layout.setSpacing(9)
+        layout.setContentsMargins(2, 6, 2, 4)
+        layout.setSpacing(7)
         scroll.setWidget(content)
-        shell_layout.addWidget(scroll)
-        self.setCentralWidget(shell)
 
-        layout.addLayout(self._build_header())
         layout.addWidget(self._build_region_card())
         layout.addWidget(self._build_params_card())
         layout.addWidget(self._build_status_card())
         layout.addLayout(self._build_controls())
         layout.addWidget(self._build_log())
         layout.addStretch(1)
+        return scroll
 
     def _build_header(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -163,11 +184,13 @@ class MainWindow(QMainWindow):
         version = QLabel(f"v{APP_VERSION}")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        self._agent_btn = QPushButton("Agent")
-        self._agent_btn.setObjectName("ghost")
-        self._agent_btn.setToolTip("配置：异常发生时是否交给 DSH Agent 处理")
+        self._agent_status = QLabel("Agent 未启用")
+        self._agent_status.setObjectName("version")
+        self._agent_status.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
+        )
         row.addLayout(text, 1)
-        row.addWidget(self._agent_btn)
+        row.addWidget(self._agent_status)
         row.addWidget(version)
         return row
 
@@ -409,14 +432,15 @@ class MainWindow(QMainWindow):
         self._log.setObjectName("log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(400)
-        self._log.setFixedHeight(78)
+        self._log.setFixedHeight(64)
         return self._log
 
     # ------------------------------------------------------------------ 绑定
     def _wire(self) -> None:
         self._region_btn.clicked.connect(self._pick_region)
         self._clear_region_btn.clicked.connect(self._clear_region)
-        self._agent_btn.clicked.connect(self._open_agent_settings)
+        self._agent_panel.saved.connect(self._on_agent_saved)
+        self._playbook_panel.saved.connect(self._on_playbook_saved)
         self._selector.selected.connect(self._on_region_selected)
         self._selector.cancelled.connect(self._on_region_cancelled)
         self._action_btn.clicked.connect(self._on_action)
@@ -827,15 +851,29 @@ class MainWindow(QMainWindow):
         self._preview.setPixmap(pixmap)
 
     # ------------------------------------------------------------------ Agent
-    def _open_agent_settings(self) -> None:
-        ensure_playbook()
-        dialog = AgentSettingsDialog(self._config, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        dialog.apply_to(self._config)
+    def _on_agent_saved(self) -> None:
+        self._agent_panel.apply_to(self._config)
         self._persist()
+        self._refresh_agent_status()
         state = "已启用" if self._config.agent_enabled else "已关闭"
         self._append_log(f"Agent 接管：{state}")
+
+    def _on_playbook_saved(self, version: int) -> None:
+        self._append_log(f"规则手册已保存（v{version}）")
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._tabs.widget(index) is self._history_panel:
+            self._history_panel.refresh()
+
+    def _refresh_agent_status(self) -> None:
+        if self._config.agent_enabled and self._config.agent_base_url.strip():
+            text, color = "Agent 已启用", "#34d399"
+        elif self._config.agent_enabled:
+            text, color = "Agent 待配置", "#fbbf24"
+        else:
+            text, color = "Agent 未启用", "#64748b"
+        self._agent_status.setText(text)
+        self._agent_status.setStyleSheet(f"color: {color}; font-size: 11px;")
 
     def _audio_text(self, stats: dict) -> str:
         if not stats.get("audio_enabled"):

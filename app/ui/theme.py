@@ -278,6 +278,27 @@ QToolTip {
     padding: 4px 8px;
 }
 
+QTabWidget::pane {
+    border: none;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #7f90a3;
+    padding: 6px 15px;
+    margin-right: 4px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+    font-size: 12px;
+}
+QTabBar::tab:hover {
+    color: #c3d2e2;
+}
+QTabBar::tab:selected {
+    color: #eef4fb;
+    border-bottom: 2px solid #0ea5e9;
+}
+
 QDialog {
     background: #0b0f14;
 }
