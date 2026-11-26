@@ -40,6 +40,8 @@ class AppConfig:
     audio_device_id: str = ""
     audio_device_name: str = ""
     audio_tolerance_db: float = 1.5
+    control_api_enabled: bool = True
+    control_api_port: int = 8765
 
     def resolved_save_folder(self) -> Path:
         return Path(self.save_folder) if self.save_folder else default_save_folder()
@@ -68,6 +70,8 @@ class AppConfig:
                 audio_device_id=str(raw.get("audio_device_id", "")),
                 audio_device_name=str(raw.get("audio_device_name", "")),
                 audio_tolerance_db=float(raw.get("audio_tolerance_db", 1.5)),
+                control_api_enabled=bool(raw.get("control_api_enabled", True)),
+                control_api_port=int(raw.get("control_api_port", 8765)),
             )
         except (OSError, ValueError, TypeError):
             return cls()

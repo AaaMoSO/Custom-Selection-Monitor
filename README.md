@@ -19,6 +19,7 @@
 - **像素差判定**：逐像素比较 RGB，任一通道差值超过「像素容差」（默认 8 级）才算该像素发生变化；变化率 = 变化像素 / 总像素 × 100%。
 - **未变化计数**：变化率 **低于阈值** → `n += 1`；任一次 **达到阈值** → `n = 0` 重新累加。
 - **触发暂停**：`n > 上限`（严格大于，例如上限 5 时第 6 次触发）→ 暂停监控，在「触发输出目录」下生成一个以时间命名的文件夹，内含尾图 `tail.png` 与选框位置 `region.json`。
+- **本地控制 API**：启动后在 `127.0.0.1` 上提供 `GET /api/status` 与 `POST /api/resume`，其他程序或 Agent 可以直接让本程序「继续监控」，无需操作界面。
 - **缓存保留**：触发后不清空那 10 帧缓存，随时可「继续监控」。
 - **恢复语义**：继续后第一帧作为新基准、不参与计数，计数器归零，避免暂停期间的变化被误计。
 - **参数持久化**：阈值、上限、容差、输出目录写入 `<程序目录>\data\config.json`，下次启动自动恢复。
@@ -51,8 +52,9 @@ if n > max_unchanged          : 暂停监控 + 生成截图文件夹（缓存保
 | 用途 | 位置 | 说明 |
 | --- | --- | --- |
 | 10 帧监控缓存 | `<程序目录>\data\frames\` | 自动保留最近 10 张，开始/停止监控时清理；退出程序后保留最后一组便于查看 |
-| 配置文件 | `<程序目录>\data\config.json` | 阈值、上限、容差、输出目录、边框、音频设备与容差 |
+| 配置文件 | `<程序目录>\data\config.json` | 阈值、上限、容差、输出目录、边框、音频设备、控制 API 开关/端口 |
 | 触发输出 | 默认 `<程序目录>\captures\`，可自行选择 | 每次触发生成一个文件夹：`tail.png` + `region.json` |
+| 控制 API 发现文件 | `<程序目录>\data\control-api.json` | 启动时写入实际端口，退出时删除 |
 
 所有“程序自己用”的文件默认都留在**程序所在目录**（源码运行时即项目根目录，打包后即 exe 所在目录），不会往 C 盘用户目录写。只有程序目录不可写时（例如装在 `Program Files`）才退回 `%APPDATA%\PauseRecognition`。
 
@@ -119,10 +121,62 @@ captures\pause_20261126-204301\
 - 同一秒内多次触发会自动追加序号（`..._1`），**绝不覆盖**历史文件夹。
 - 输出目录不存在时自动创建。
 
+## 对外控制 API（本地）
+
+程序启动后会在 `127.0.0.1` 上开一个控制服务，供其他程序或 Agent 调用。默认端口 `8765`（被占用会顺延），并写入发现文件 `data/control-api.json`：
+
+```json
+{
+  "service": "pause-recognition-control",
+  "baseUrl": "http://127.0.0.1:8765",
+  "port": 8765,
+  "status": "http://127.0.0.1:8765/api/status",
+  "resume": "http://127.0.0.1:8765/api/resume"
+}
+```
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api` | 服务自述 |
+| GET | `/api/status` | 当前状态：state / region / 缓存 / 计数 / 变化率 / 音频 |
+| POST | `/api/resume` | **继续监控**：`PAUSED → MONITORING`；已在监控返回 200；未开始监控返回 409 |
+
+```powershell
+# 查询状态
+curl.exe http://127.0.0.1:8765/api/status
+
+# 继续监控
+curl.exe -X POST http://127.0.0.1:8765/api/resume
+```
+
+`resume` 成功时会带上 `"resumed": true` 和最新状态，例如：
+
+```json
+{
+  "ok": true,
+  "state": "monitoring",
+  "region": {"left": 720, "top": 380, "width": 480, "height": 320,
+             "right": 1200, "bottom": 700},
+  "frames": 23,
+  "buffer": {"size": 10, "capacity": 10},
+  "unchanged": 6,
+  "max_unchanged": 5,
+  "last_ratio": 0.0,
+  "audio": {"enabled": false, "level": null},
+  "resumed": true
+}
+```
+
+- 只绑定 `127.0.0.1`，不对外网开放；本地程序无需鉴权即可调用。
+- 带 `Origin` 请求头的调用会被拒绝，避免网页跨站驱动本程序。
+- 动作通过 Qt 主线程执行，HTTP 请求会等执行完成再返回；主线程忙时约 3 秒超时（503）。
+- 可在 `data/config.json` 里用 `control_api_enabled`、`control_api_port` 关闭或改端口；退出时自动删除发现文件。
+
 ## 项目结构
 
 ```text
 app/
+  api.py          # 本地控制 API（状态查询 / 继续监控）
   audio.py        # 音频输出设备枚举与 loopback 电平采集
   border.py       # 常驻区域边框（置顶、鼠标穿透、排除截图）
   buffer.py       # 10 帧内存环形缓存
@@ -138,7 +192,7 @@ app/
   selection.py    # 全屏框选遮罩
   state.py        # 未变化计数状态机
   ui/             # 主窗口、主题与图标资源
-tests/            # 单元测试 + 离屏 GUI 冒烟（90 项）
+tests/            # 单元测试 + 离屏 GUI 冒烟（99 项）
 scripts/
   smoke_test.py   # 真实截屏链路冒烟测试
 docs/             # 界面截图
@@ -149,7 +203,7 @@ run.bat           # Windows 启动脚本（自动挑选解释器）
 ## 测试
 
 ```powershell
-# 单元测试 + 离屏 GUI 冒烟（90 项）
+# 单元测试 + 离屏 GUI 冒烟（99 项）
 python -m unittest discover -s tests -t .
 
 # 真实链路冒烟：截屏 → 判定 → 触发 → 落盘 → 检查缓存目录
@@ -195,3 +249,4 @@ VS Code 里按 `Ctrl+Shift+P` → `Python: Select Interpreter`，选择 `D:\pyth
 - 声音检测依赖 WASAPI loopback：被独占模式占用的声卡可能无法录制；设备被拔出时程序会跳过像素比对并在日志提示。
 - 声音门控比较的是**相邻两个采样区间的 RMS 电平**：持续播放且音量稳定的声音会被判为"不变"；只有电平变化才会阻止比对。若希望"有任何声音就视为活动"，可以再改判定口径。
 - 音频电平受播放内容影响较大，默认容差 1.5 dB 偏严格；音乐/视频场景可适当调大到 2–4 dB。
+- 本地控制 API 无鉴权，只应在本机使用；不要把 `127.0.0.1:8765` 转发到公网。需要更强隔离时可在 `config.json` 关闭 `control_api_enabled`。

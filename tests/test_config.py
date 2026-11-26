@@ -97,6 +97,19 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.audio_device_name, "扬声器")
             self.assertAlmostEqual(loaded.audio_tolerance_db, 2.5)
 
+    def test_control_api_defaults_and_roundtrip(self):
+        defaults = AppConfig()
+        self.assertTrue(defaults.control_api_enabled)
+        self.assertEqual(defaults.control_api_port, 8765)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config = AppConfig(control_api_enabled=False, control_api_port=9001)
+            config.save(path)
+            loaded = AppConfig.load(path)
+            self.assertFalse(loaded.control_api_enabled)
+            self.assertEqual(loaded.control_api_port, 9001)
+
 
 if __name__ == "__main__":
     unittest.main()

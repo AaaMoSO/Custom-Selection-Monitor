@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import paths
+from ..api import ControlApiServer, ControlBridge
 from ..audio import AudioDevice, default_output_device, is_silent, list_output_devices
 from ..border import RegionBorder
 from ..capture import CaptureRegion
@@ -81,6 +82,9 @@ class MainWindow(QMainWindow):
         self._border = RegionBorder(self)
         self._audio_devices: list[AudioDevice] = []
         self._audio_indicator_cache: tuple[str, str] | None = None
+        self._control_bridge = ControlBridge(self)
+        self._control_bridge.requested.connect(self._on_control_request)
+        self._control_server: ControlApiServer | None = None
         self._loading = True
 
         self._build()
@@ -99,6 +103,7 @@ class MainWindow(QMainWindow):
         )
         self._append_log("请先「框选区域」，再点击「开始监控」。")
 
+        self._start_control_api()
         self._place_window()
 
     # ------------------------------------------------------------------ 构建
@@ -781,6 +786,83 @@ class MainWindow(QMainWindow):
         )
         self._preview.setPixmap(pixmap)
 
+    # ------------------------------------------------------------------ 控制 API
+    def _start_control_api(self) -> None:
+        if not self._config.control_api_enabled:
+            return
+        server = ControlApiServer(
+            self._control_bridge.call,
+            port=self._config.control_api_port,
+            discovery_path=paths.data_dir() / "control-api.json",
+        )
+        url = server.start()
+        if url:
+            self._control_server = server
+            self._append_log(f"控制 API：{url}（POST /api/resume）")
+        else:
+            self._append_log("控制 API 启动失败：端口被占用")
+
+    def _control_status(self) -> dict:
+        stats = self._controller.stats()
+        region = stats.get("region")
+        return {
+            "ok": True,
+            "state": stats["state"].value,
+            "region": None
+            if region is None
+            else {
+                "left": region.left,
+                "top": region.top,
+                "width": region.width,
+                "height": region.height,
+                "right": region.right,
+                "bottom": region.bottom,
+            },
+            "frames": stats["frames"],
+            "buffer": {
+                "size": stats["buffer_size"],
+                "capacity": stats["capacity"],
+            },
+            "unchanged": stats["unchanged"],
+            "max_unchanged": stats["max_unchanged"],
+            "last_ratio": stats["last_ratio"],
+            "audio": {
+                "enabled": bool(stats.get("audio_enabled")),
+                "level": stats.get("audio_level"),
+            },
+        }
+
+    def _on_control_request(self, request) -> None:
+        try:
+            if request.kind == "status":
+                request.respond(200, self._control_status())
+                return
+            if request.kind == "resume":
+                state = self._controller.state
+                if state is MonitorState.PAUSED:
+                    self._controller.resume()
+                    payload = self._control_status()
+                    payload["resumed"] = True
+                    request.respond(200, payload)
+                elif state is MonitorState.MONITORING:
+                    payload = self._control_status()
+                    payload["resumed"] = False
+                    payload["message"] = "already monitoring"
+                    request.respond(200, payload)
+                else:
+                    request.respond(
+                        409,
+                        {
+                            "ok": False,
+                            "error": "no active monitoring session",
+                            "state": state.value,
+                        },
+                    )
+                return
+            request.respond(404, {"ok": False, "error": "unknown action"})
+        except Exception as exc:
+            request.respond(500, {"ok": False, "error": str(exc)})
+
     def _on_failed(self, message: str) -> None:
         self._append_log(f"错误：{message}")
         QMessageBox.warning(self, "发生错误", message)
@@ -794,5 +876,8 @@ class MainWindow(QMainWindow):
         if self._selector.active:
             self._selector.cancel()
         self._border.close()
+        if self._control_server is not None:
+            self._control_server.stop()
+            self._control_server = None
         self._controller.shutdown()
         super().closeEvent(event)

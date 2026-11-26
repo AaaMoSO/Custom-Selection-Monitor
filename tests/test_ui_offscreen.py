@@ -35,7 +35,10 @@ class MainWindowSmokeTests(unittest.TestCase):
         from app.state import MonitorState
         from app.ui.main_window import MainWindow
 
-        config = AppConfig(save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke"))
+        config = AppConfig(
+            save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke"),
+            control_api_enabled=False,
+        )
         controller = MonitorController(config)
         window = MainWindow(controller, config)
         window.resize(720, 776)
@@ -159,7 +162,10 @@ class MainWindowSmokeTests(unittest.TestCase):
         from app.controller import MonitorController
         from app.ui.main_window import MainWindow
 
-        config = AppConfig(save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke-2"))
+        config = AppConfig(
+            save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke-2"),
+            control_api_enabled=False,
+        )
         controller = MonitorController(config)
         window = MainWindow(controller, config)
         window.show()
@@ -182,6 +188,27 @@ class MainWindowSmokeTests(unittest.TestCase):
         self.assertFalse(window._action_btn.isEnabled())
 
         window.close()
+        controller.shutdown()
+
+
+    def test_window_starts_control_api(self):
+        from app.config import AppConfig
+        from app.controller import MonitorController
+        from app.ui.main_window import MainWindow
+
+        config = AppConfig(
+            save_folder=str(Path(os.environ.get("TEMP", ".")) / "pr-smoke-api"),
+            control_api_enabled=True,
+            control_api_port=0,
+        )
+        controller = MonitorController(config)
+        window = MainWindow(controller, config)
+        self.app.processEvents()
+
+        self.assertIsNotNone(window._control_server)
+        self.assertTrue(window._control_server.base_url.startswith("http://127.0.0.1:"))
+        window.close()
+        self.assertIsNone(window._control_server)
         controller.shutdown()
 
 
