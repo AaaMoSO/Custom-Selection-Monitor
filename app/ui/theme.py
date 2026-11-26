@@ -207,26 +207,6 @@ QCheckBox::indicator:checked {
     image: url("__CHECK_ICON__");
 }
 
-QListWidget {
-    background: #0c1219;
-    border: 1px solid #1a2330;
-    border-radius: 10px;
-    color: #c3d2e2;
-    outline: none;
-    padding: 4px;
-}
-QListWidget::item {
-    padding: 6px 8px;
-    border-radius: 6px;
-}
-QListWidget::item:hover {
-    background: #16202b;
-}
-QListWidget::item:selected {
-    background: #0ea5e9;
-    color: #04121c;
-}
-
 QPlainTextEdit {
     background: #090e14;
     border: 1px solid #1a2330;
@@ -234,10 +214,6 @@ QPlainTextEdit {
     color: #b8c7d9;
     padding: 8px;
     selection-background-color: #1d4ed8;
-}
-QPlainTextEdit#codeEditor {
-    font-family: "Cascadia Mono", "Consolas", monospace;
-    font-size: 12px;
 }
 QPlainTextEdit#log {
     background: #090e14;
@@ -278,49 +254,8 @@ QToolTip {
     padding: 4px 8px;
 }
 
-QTabWidget::pane {
-    border: none;
-}
-QTabBar::tab {
-    background: transparent;
-    color: #7f90a3;
-    padding: 6px 15px;
-    margin-right: 4px;
-    border: none;
-    border-bottom: 2px solid transparent;
-    font-weight: 600;
-    font-size: 12px;
-}
-QTabBar::tab:hover {
-    color: #c3d2e2;
-}
-QTabBar::tab:selected {
-    color: #eef4fb;
-    border-bottom: 2px solid #0ea5e9;
-}
-
 QDialog {
     background: #0b0f14;
-}
-QLabel#dialogTitle {
-    font-size: 17px;
-    font-weight: 700;
-    color: #eef4fb;
-}
-QGroupBox {
-    border: 1px solid #1d2632;
-    border-radius: 10px;
-    margin-top: 12px;
-    padding: 14px 10px 8px 10px;
-    color: #8fa2b6;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 4px;
-    color: #8fa2b6;
-    font-weight: 700;
-    font-size: 11px;
 }
 """
 
