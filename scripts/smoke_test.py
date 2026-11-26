@@ -119,11 +119,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     saved = Path(path)
-    with Image.open(saved) as image:
+    if not saved.is_dir():
+        print("结果: 保存路径不是文件夹：", saved)
+        return 1
+    tail = saved / "tail.png"
+    meta = saved / "region.json"
+    with Image.open(tail) as image:
         size = image.size
-    print("结果: 已触发并保存", saved, "尺寸:", size)
-    ok = size == (region.width, region.height) and saved.stat().st_size > 0
-    print("校验:", "通过" if ok else "失败")
+    print("结果: 已触发并保存", saved, "尾图尺寸:", size)
+    ok = size == (region.width, region.height) and tail.stat().st_size > 0 and meta.exists()
+    print("校验:", "通过" if ok else "失败", "| region.json:", meta.exists())
     return 0 if ok else 1
 
 

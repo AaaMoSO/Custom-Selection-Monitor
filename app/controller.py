@@ -21,7 +21,7 @@ from .buffer import Frame, FrameBuffer
 from .cache import FrameCache
 from .capture import CaptureRegion, ScreenCapturer
 from .config import AppConfig
-from .saver import save_frame
+from .saver import save_capture
 from .state import ChangeDetector, Decision, DetectorConfig, MonitorState
 
 
@@ -356,14 +356,33 @@ class MonitorController(QObject):
         self.stateChanged.emit(self._detector.state)
         folder = self._config.resolved_save_folder()
         path = None
+        metadata = {
+            "trigger": {
+                "threshold_percent": self._config.threshold_percent,
+                "tolerance": self._config.tolerance,
+                "max_unchanged": self._config.max_unchanged,
+                "unchanged": self._detector.unchanged_count,
+                "last_ratio_percent": self._detector.last_ratio,
+                "frames_captured": self._frames_captured,
+                "buffer_size": len(self._buffer),
+            },
+            "audio": {
+                "enabled": self._audio_enabled,
+                "device": self._audio_device.name if self._audio_device else "",
+                "level_dbfs": self._audio_level,
+            },
+        }
         try:
-            path = save_frame(frame.image, folder, captured_at)
+            if self._region is not None:
+                path = save_capture(
+                    frame.image, folder, self._region, captured_at, metadata
+                )
             self.logged.emit(
                 f"连续 {self._detector.unchanged_count} 次未变化（上限 "
-                f"{self._config.max_unchanged}），尾图已输出：{path}"
+                f"{self._config.max_unchanged}），截图集已输出：{path}"
             )
         except Exception as exc:
-            self.failed.emit(f"保存尾图失败：{exc}")
+            self.failed.emit(f"保存截图集失败：{exc}")
 
         self.triggered.emit(
             {

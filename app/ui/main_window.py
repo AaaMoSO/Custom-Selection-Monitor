@@ -202,14 +202,14 @@ class MainWindow(QMainWindow):
         file_row = QHBoxLayout()
         file_row.setSpacing(7)
         self._folder_edit = QLineEdit()
-        self._folder_edit.setPlaceholderText("尾图输出目录（触发暂停时保存）…")
-        self._folder_edit.setToolTip("异常触发时，尾图保存到这个目录；可随时修改")
+        self._folder_edit.setPlaceholderText("触发输出目录（每次生成一个文件夹）…")
+        self._folder_edit.setToolTip("每次触发会在这个目录下生成一个文件夹（尾图 + 选框位置），可随时修改")
         file_row.addWidget(self._folder_edit, 1)
         self._browse_btn = QPushButton("浏览")
         self._browse_btn.setObjectName("ghost")
         self._open_btn = QPushButton("打开输出")
         self._open_btn.setObjectName("ghost")
-        self._open_btn.setToolTip("打开尾图输出目录")
+        self._open_btn.setToolTip("打开触发输出目录")
         self._cache_btn = QPushButton("打开缓存")
         self._cache_btn.setObjectName("ghost")
         self._cache_btn.setToolTip("打开程序目录内的帧缓存文件夹")
@@ -362,7 +362,7 @@ class MainWindow(QMainWindow):
         self._preview.setObjectName("preview")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setFixedSize(_PREVIEW_W, _PREVIEW_H)
-        self._last_saved = QLabel("尾图输出：—")
+        self._last_saved = QLabel("输出：—")
         self._last_saved.setObjectName("lastSaved")
         self._last_saved.setFixedWidth(_PREVIEW_W)
         right.addWidget(self._preview, 0, Qt.AlignmentFlag.AlignRight)
@@ -515,14 +515,14 @@ class MainWindow(QMainWindow):
 
     def _browse(self) -> None:
         start = self._folder_edit.text().strip() or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, "选择尾图输出目录", start)
+        chosen = QFileDialog.getExistingDirectory(self, "选择触发输出目录", start)
         if chosen:
             self._folder_edit.setText(chosen)
             self._persist()
 
     def _open_output(self) -> None:
         folder = Path(self._folder_edit.text().strip() or str(self._config.resolved_save_folder()))
-        self._open_path(folder, "尾图输出目录")
+        self._open_path(folder, "触发输出目录")
 
     def _open_cache(self) -> None:
         self._open_path(self._controller.cache.directory, "帧缓存目录")
@@ -767,7 +767,7 @@ class MainWindow(QMainWindow):
             metrics = self._last_saved.fontMetrics()
             self._last_saved.setText(
                 metrics.elidedText(
-                    f"尾图输出：{name}", Qt.TextElideMode.ElideMiddle, _PREVIEW_W
+                    f"输出：{name}", Qt.TextElideMode.ElideMiddle, _PREVIEW_W
                 )
             )
             self._last_saved.setToolTip(str(path))

@@ -97,7 +97,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         window._on_triggered(
             {
                 "image": preview,
-                "path": Path("C:/shots/pause_20260101-000000.png"),
+                "path": Path("C:/shots/pause_20260101-000000"),
                 "ratio": 0.0,
                 "unchanged": 6,
             }
@@ -105,6 +105,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIsNotNone(window._preview.pixmap())
         self.assertIn("pause_", window._last_saved.toolTip())
+        self.assertTrue(window._last_saved.text().startswith("输出："))
 
         window.close()
         controller.shutdown()

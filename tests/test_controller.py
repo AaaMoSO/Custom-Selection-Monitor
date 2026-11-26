@@ -183,12 +183,19 @@ class ControllerCacheTests(unittest.TestCase):
         self.assertEqual(self.cache.count, 4)
         self.assertEqual(len(list((self.root / "frames").glob("*.png"))), 4)
 
-        outputs = list((self.root / "out").glob("pause_*.png"))
+        outputs = [path for path in (self.root / "out").glob("pause_*") if path.is_dir()]
         self.assertEqual(len(outputs), 1)
         from PIL import Image
 
-        with Image.open(outputs[0]) as saved:
+        folder = outputs[0]
+        self.assertTrue((folder / "region.json").exists())
+        with Image.open(folder / "tail.png") as saved:
             self.assertEqual(saved.size, (20, 10))
+        import json
+
+        payload = json.loads((folder / "region.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["region"]["width"], 20)
+        self.assertEqual(payload["region"]["height"], 10)
 
         # 触发只暂停，不清理缓存
         self.assertEqual(self.cache.count, 4)
